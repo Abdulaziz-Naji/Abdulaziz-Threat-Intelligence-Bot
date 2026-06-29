@@ -335,7 +335,7 @@ async def email_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         email_header     = _render_email_header(email, domain, provider)
         domain_verdict   = domain_meta.get("risk_level") or domain_meta.get("soc_verdict") or "Clean"
         email_risk_summary = _render_email_risk_summary(
-            mx_records, spf, dmarc, dkim_list, domain_verdict
+            mx_records, provider, domain_verdict
         )
         email_validation = _render_email_validation(
             email, domain, provider,
