@@ -228,18 +228,14 @@ async def auto_dfir_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode=ParseMode.HTML,
             )
 
-            # ── IMAGE: Full Metadata Extraction (ExifTool equivalent) ────────────
+            # ── IMAGE: Full Metadata Extraction & Digital Forensics Report ────────────
             _IMAGE_TYPES = ('jpeg', 'jpg', 'png', 'gif', 'webp', 'tiff', 'bmp')
             if ftype in _IMAGE_TYPES:
                 await status_msg.edit_text(
-                    f"🔬 <b>DFIR AUTO-EXECUTION ENGINE</b>\n"
+                    f"🔬 <b>DIGITAL FORENSICS ENGINE</b>\n"
                     f"<code>━━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n"
                     f"📁 <code>{_h(filename)}</code>\n\n"
-                    f"<b>⏳ Stage 3a/5:</b> Extracting full image metadata\n"
-                    f"  🔸 EXIF / XMP / IPTC extraction\n"
-                    f"  🔸 Photoshop IRB / text layers\n"
-                    f"  🔸 GPS coordinates\n"
-                    f"  🔸 Steganography scan",
+                    f"<b>⏳ Running full forensic image analysis…</b>",
                     parse_mode=ParseMode.HTML,
                 )
                 try:
@@ -258,15 +254,11 @@ async def auto_dfir_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                                 )
                             except Exception:
                                 await message.reply_text(pg[:3900], parse_mode=ParseMode.HTML)
-                    # Refresh status for DFIR phase
-                    status_msg = await message.reply_text(
-                        f"🔬 <b>DFIR AUTO-EXECUTION ENGINE</b>\n"
-                        f"<code>━━━━━━━━━━━━━━━━━━━━━━━━━━</code>\n"
-                        f"<b>⏳ Stage 3b/5:</b> DFIR threat analysis …",
-                        parse_mode=ParseMode.HTML,
-                    )
+                    # Complete image investigation immediately without buttons or generic AI text
+                    return
                 except Exception as img_err:
                     logger.warning(f"[AutoDFIR] Image forensics error: {img_err}")
+
 
             # ── Stage 4: Forensic Execution ────────────────────────────────────
             for fname, fdata, depth, parent in analysis_queue:
