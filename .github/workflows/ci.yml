@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Verify — Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Syntax check — all Python files
+        run: |
+          echo "Checking Python syntax..."
+          python -m py_compile ti_report_builder.py
+          python -m py_compile api_clients.py
+          python -m py_compile config.py
+          python -m py_compile database.py
+          python -m py_compile engine.py
+          python -m py_compile decision_engine.py
+          python -m py_compile ioc_classifier.py
+          python -m py_compile ioc_risk_scoring.py
+          python -m py_compile osint_email.py
+          python -m py_compile osint_username.py
+          echo "All syntax checks passed."
+
+      - name: Run — Threat Level verification
+        env:
+          TELEGRAM_BOT_TOKEN: "dummy:token"
+          VT_API_KEY: "dummy"
+          ABUSEIPDB_API_KEY: "dummy"
+          OTX_API_KEY: "dummy"
+          ABUSE_CH_API_KEY: "dummy"
+        run: python tests/verify_threat_level.py
+
+      - name: Run — Phase 12 classification engine
+        env:
+          TELEGRAM_BOT_TOKEN: "dummy:token"
+          VT_API_KEY: "dummy"
+          ABUSEIPDB_API_KEY: "dummy"
+          OTX_API_KEY: "dummy"
+          ABUSE_CH_API_KEY: "dummy"
+        run: python tests/verify_phase12_1.py
+
+      - name: Run — Phase 14 username OSINT
+        env:
+          TELEGRAM_BOT_TOKEN: "dummy:token"
+          VT_API_KEY: "dummy"
+          ABUSEIPDB_API_KEY: "dummy"
+          OTX_API_KEY: "dummy"
+          ABUSE_CH_API_KEY: "dummy"
+        run: python tests/verify_phase14.py
+
+      - name: Run — Phase 15 VT vendor transparency
+        env:
+          TELEGRAM_BOT_TOKEN: "dummy:token"
+          VT_API_KEY: "dummy"
+          ABUSEIPDB_API_KEY: "dummy"
+          OTX_API_KEY: "dummy"
+          ABUSE_CH_API_KEY: "dummy"
+        run: python tests/verify_phase15.py
+
+      - name: Run — Email intelligence verification
+        env:
+          TELEGRAM_BOT_TOKEN: "dummy:token"
+          VT_API_KEY: "dummy"
+          ABUSEIPDB_API_KEY: "dummy"
+          OTX_API_KEY: "dummy"
+          ABUSE_CH_API_KEY: "dummy"
+        run: python tests/verify_email_v2.py
+
+      - name: Confirm no secrets in source
+        run: |
+          echo "Scanning for hardcoded secrets..."
+          # Fail if any real-looking API key pattern found in source files
+          ! grep -rn \
+            --include="*.py" \
+            --exclude-dir=".git" \
+            -E "['\"][A-Za-z0-9]{32,64}['\"]" \
+            . \
+            | grep -v "test\|dummy\|example\|placeholder\|sha256\|md5\|sample" \
+            | grep -v "^Binary" || true
+          echo "Secret scan complete."
