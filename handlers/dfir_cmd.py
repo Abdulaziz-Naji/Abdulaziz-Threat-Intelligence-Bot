@@ -188,6 +188,22 @@ async def dfir_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             vt_res, otx_res, mb_res = {}, {}, {}
 
+        if download_success and ftype in ("png", "jpg", "jpeg", "gif", "webp", "tiff", "bmp"):
+            import image_forensics as img_forensics
+            img_analysis = img_forensics.analyze_image_full(file_bytes, filename)
+            meta_pages = img_forensics.format_metadata_report(img_analysis)
+            try:
+                await thinking.delete()
+            except Exception:
+                pass
+            for pg in meta_pages:
+                if pg.strip():
+                    try:
+                        await message.reply_text(pg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+                    except Exception:
+                        await message.reply_text(pg[:3900], parse_mode=ParseMode.HTML)
+            return
+
         await thinking.edit_text(
             "🔬 <b>DFIR Engine — Step 4/4</b>\n\n"
             "🧠 Generating investigator narrative…\n"
@@ -197,6 +213,7 @@ async def dfir_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "  • Producing containment recommendations",
             parse_mode=ParseMode.HTML,
         )
+
 
         # ── Run DFIR engine ──────────────────────────────────────────
         if not download_success:
