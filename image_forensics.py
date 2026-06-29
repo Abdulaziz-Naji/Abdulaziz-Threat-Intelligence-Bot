@@ -37,39 +37,32 @@ except ImportError:
 def analyze_image_full(data: bytes, filename: str) -> dict:
     """
     Performs full digital forensic analysis of an image file.
-    Returns a comprehensive structured dictionary.
+    Returns a comprehensive structured dictionary of all available metadata and assessments.
     """
+    raw_str = data.decode('latin-1', errors='ignore')
+
     res = {
         "file_info": _extract_file_info(data, filename),
         "image_properties": _extract_image_properties(data),
+        "camera_information": _extract_camera_information(data, raw_str),
         "exif_metadata": _extract_exif_metadata(data),
         "gps_analysis": _extract_gps_analysis(data),
+        "adobe_photoshop_analysis": _extract_photoshop_analysis(data, raw_str),
+        "xmp_metadata": _extract_xmp_metadata(raw_str),
+        "iptc_metadata": _extract_iptc_metadata(data, raw_str),
+        "icc_profile": _extract_icc_profile(data),
         "metadata_validation": {},
         "ai_detection": {},
         "manipulation_analysis": {},
         "hidden_data": {},
         "forensic_assessment": {},
-        "raw_text_layers": [],
-        "has_psd_thumbnail": False,
     }
 
-    # 1. Run deeper binary extraction (XMP, Photoshop, IPTC)
-    raw_str = data.decode('latin-1', errors='ignore')
-    _extract_xmp_photoshop_layers(data, raw_str, res)
-
-    # 2. Perform Metadata Validation
+    # Perform calculations and assessments
     res["metadata_validation"] = _perform_metadata_validation(data, res, raw_str)
-
-    # 3. AI Detection Heuristics
     res["ai_detection"] = _perform_ai_detection(data, res, raw_str)
-
-    # 4. Image Manipulation Analysis (ELA, Double JPEG, Cropping, Resizing)
     res["manipulation_analysis"] = _perform_manipulation_analysis(data, res, raw_str)
-
-    # 5. Hidden Data & Steganography Detection
     res["hidden_data"] = _perform_hidden_data_detection(data, res)
-
-    # 6. Final Forensic Assessment & Scoring
     res["forensic_assessment"] = _calculate_forensic_assessment(res)
 
     return res
@@ -89,8 +82,8 @@ def _extract_file_info(data: bytes, filename: str) -> dict:
         size_str = f"{size_bytes / (1024 * 1024):.2f} MB ({size_bytes:,} bytes)"
 
     # Detect file type & MIME
-    ftype = "JPEG"
-    mime = "image/jpeg"
+    ftype = ""
+    mime = ""
     if data.startswith(b'\xff\xd8\xff'):
         ftype, mime = "JPEG", "image/jpeg"
     elif data.startswith(b'\x89PNG\r\n\x1a\n'):
@@ -108,15 +101,15 @@ def _extract_file_info(data: bytes, filename: str) -> dict:
     elif PIL_AVAILABLE:
         try:
             with Image.open(io.BytesIO(data)) as img:
-                ftype = img.format if img.format else "Unknown"
-                mime = Image.MIME.get(img.format, "application/octet-stream")
+                ftype = img.format if img.format else ""
+                mime = Image.MIME.get(img.format, "")
         except Exception:
             pass
 
     return {
-        "Filename": filename if filename else "Not Available",
-        "File type": ftype if ftype else "Not Available",
-        "MIME type": mime if mime else "Not Available",
+        "Filename": filename if filename else "",
+        "File type": ftype,
+        "MIME type": mime,
         "File size": size_str,
         "SHA256": hashlib.sha256(data).hexdigest(),
         "SHA1": hashlib.sha1(data).hexdigest(),
@@ -125,16 +118,7 @@ def _extract_file_info(data: bytes, filename: str) -> dict:
 
 
 def _extract_image_properties(data: bytes) -> dict:
-    props = {
-        "Width": "Not Available",
-        "Height": "Not Available",
-        "Resolution": "Not Available",
-        "Aspect Ratio": "Not Available",
-        "Color Space": "Not Available",
-        "Compression": "Not Available",
-        "DPI": "Not Available",
-        "Bit Depth": "Not Available",
-    }
+    props = {}
 
     if not PIL_AVAILABLE:
         return props
@@ -165,16 +149,13 @@ def _extract_image_properties(data: bytes) -> dict:
                 "I": ("32-bit Integer", "32-bit"),
                 "F": ("32-bit Floating point", "32-bit"),
             }
-            cs, bd = mode_map.get(mode, (f"Custom ({mode})", "Not Available"))
-            props["Color Space"] = cs
-            props["Bit Depth"] = bd
+            if mode in mode_map:
+                props["Color Space"], props["Bit Depth"] = mode_map[mode]
 
             # DPI
             dpi_val = img.info.get("dpi")
             if dpi_val and isinstance(dpi_val, (tuple, list)) and len(dpi_val) >= 2:
                 props["DPI"] = f"{round(dpi_val[0])}x{round(dpi_val[1])}"
-            elif dpi_val:
-                props["DPI"] = str(dpi_val)
 
             # Compression
             comp = img.info.get("compression")
@@ -187,30 +168,43 @@ def _extract_image_properties(data: bytes) -> dict:
                     props["Compression"] = "JPEG (Baseline DCT)"
             elif img.format == "PNG":
                 props["Compression"] = "Deflate (PNG)"
-            elif img.format:
-                props["Compression"] = f"{img.format} standard encoding"
     except Exception:
         pass
 
     return props
 
 
-def _extract_exif_metadata(data: bytes) -> dict:
-    exif_fields = {
-        "Camera Make": "Not Available",
-        "Camera Model": "Not Available",
-        "Lens": "Not Available",
-        "Exposure": "Not Available",
-        "ISO": "Not Available",
-        "Aperture": "Not Available",
-        "Focal Length": "Not Available",
-        "Flash": "Not Available",
-        "White Balance": "Not Available",
-        "Software": "Not Available",
-        "Date Taken": "Not Available",
-        "Date Modified": "Not Available",
-    }
+def _extract_camera_information(data: bytes, raw_str: str) -> dict:
+    cam = {}
+    if not PIL_AVAILABLE:
+        return cam
 
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            exif_raw = img._getexif() if hasattr(img, "_getexif") else None
+            if exif_raw:
+                parsed = {TAGS.get(t, t): v for t, v in exif_raw.items()}
+                
+                # Device metadata
+                for k in ("Make", "Model", "LensMake", "LensModel", "LensSerialNumber", "BodySerialNumber", "OwnerName", "Artist"):
+                    if k in parsed and str(parsed[k]).strip():
+                        cam[k] = str(parsed[k]).strip()
+    except Exception:
+        pass
+
+    # Dynamic fallback check in raw XML tags
+    if "Model" not in cam:
+        model_m = re.findall(r'<tiff:Model>([^<]+)</tiff:Model>', raw_str)
+        if model_m: cam["Model"] = model_m[0]
+    if "Make" not in cam:
+        make_m = re.findall(r'<tiff:Make>([^<]+)</tiff:Make>', raw_str)
+        if make_m: cam["Make"] = make_m[0]
+
+    return cam
+
+
+def _extract_exif_metadata(data: bytes) -> dict:
+    exif_fields = {}
     if not PIL_AVAILABLE:
         return exif_fields
 
@@ -218,15 +212,7 @@ def _extract_exif_metadata(data: bytes) -> dict:
         with Image.open(io.BytesIO(data)) as img:
             exif_raw = img._getexif() if hasattr(img, "_getexif") else None
             if exif_raw:
-                parsed = {}
-                for tag, value in exif_raw.items():
-                    tag_name = TAGS.get(tag, tag)
-                    parsed[tag_name] = value
-
-                if "Make" in parsed and str(parsed["Make"]).strip():
-                    exif_fields["Camera Make"] = str(parsed["Make"]).strip()
-                if "Model" in parsed and str(parsed["Model"]).strip():
-                    exif_fields["Camera Model"] = str(parsed["Model"]).strip()
+                parsed = {TAGS.get(t, t): v for t, v in exif_raw.items()}
 
                 # Lens
                 lens = parsed.get("LensModel") or parsed.get("LensMake")
@@ -252,8 +238,7 @@ def _extract_exif_metadata(data: bytes) -> dict:
                 fnum = parsed.get("FNumber") or parsed.get("ApertureValue")
                 if fnum:
                     if isinstance(fnum, tuple) and len(fnum) == 2 and fnum[1] != 0:
-                        val = round(fnum[0] / fnum[1], 1)
-                        exif_fields["Aperture"] = f"f/{val}"
+                        exif_fields["Aperture"] = f"f/{round(fnum[0] / fnum[1], 1)}"
                     else:
                         exif_fields["Aperture"] = f"f/{fnum}"
 
@@ -261,8 +246,7 @@ def _extract_exif_metadata(data: bytes) -> dict:
                 fl = parsed.get("FocalLength")
                 if fl:
                     if isinstance(fl, tuple) and len(fl) == 2 and fl[1] != 0:
-                        val = round(fl[0] / fl[1], 1)
-                        exif_fields["Focal Length"] = f"{val} mm"
+                        exif_fields["Focal Length"] = f"{round(fl[0] / fl[1], 1)} mm"
                     else:
                         exif_fields["Focal Length"] = f"{fl} mm"
 
@@ -292,36 +276,11 @@ def _extract_exif_metadata(data: bytes) -> dict:
     except Exception:
         pass
 
-    # Fallback checks for Software & Dates in raw binary (XMP/Photoshop headers)
-    raw_str = data.decode('latin-1', errors='ignore')
-    if exif_fields["Software"] == "Not Available":
-        soft_match = re.findall(r'stEvt:softwareAgent="([^"]+)"', raw_str) or re.findall(r'<tiff:Software>([^<]+)</tiff:Software>', raw_str)
-        if soft_match:
-            exif_fields["Software"] = soft_match[0]
-
-    if exif_fields["Date Taken"] == "Not Available":
-        cdate_match = re.findall(r'xmp:CreateDate="([^"]+)"', raw_str) or re.findall(r'<xmp:CreateDate>([^<]+)</xmp:CreateDate>', raw_str)
-        if cdate_match:
-            exif_fields["Date Taken"] = cdate_match[0]
-
-    if exif_fields["Date Modified"] == "Not Available":
-        mdate_match = re.findall(r'xmp:ModifyDate="([^"]+)"', raw_str) or re.findall(r'<xmp:ModifyDate>([^<]+)</xmp:ModifyDate>', raw_str)
-        if mdate_match:
-            exif_fields["Date Modified"] = mdate_match[0]
-
     return exif_fields
 
 
 def _extract_gps_analysis(data: bytes) -> dict:
-    gps_info = {
-        "Latitude": "Not Available",
-        "Longitude": "Not Available",
-        "Google Maps link": "Not Available",
-        "Country": "Not Available",
-        "City": "Not Available",
-        "Address": "Not Available",
-    }
-
+    gps_info = {}
     if not PIL_AVAILABLE:
         return gps_info
 
@@ -371,20 +330,124 @@ def _extract_gps_analysis(data: bytes) -> dict:
     return gps_info
 
 
-def _extract_xmp_photoshop_layers(data: bytes, raw_str: str, res: dict):
-    # Extract TextLayerName & TextLayerText from Photoshop XMP structures
-    layer_names = re.findall(r'photoshop:LayerName="([^"]+)"', raw_str)
-    layer_texts = re.findall(r'photoshop:LayerText="([^"]+)"', raw_str)
-    
-    layers = []
-    for i in range(max(len(layer_names), len(layer_texts))):
-        ln = layer_names[i] if i < len(layer_names) else "Layer"
-        lt = layer_texts[i] if i < len(layer_texts) else ""
-        layers.append({"name": ln, "text": lt})
-    res["raw_text_layers"] = layers
+def _extract_photoshop_analysis(data: bytes, raw_str: str) -> dict:
+    ps = {}
 
-    # Check if a Photoshop thumbnail structure is embedded in binary headers
-    res["has_psd_thumbnail"] = "photoshop:Thumbnail" in raw_str or (data.find(b'\xff\xd8', 2) != -1)
+    # Check Photoshop signatures
+    is_ps = "adobe photoshop" in raw_str.lower() or "8bps" in raw_str.lower() or "photoshop:LayerName" in raw_str
+    if not is_ps:
+        return ps
+
+    ps["Software"] = "Adobe Photoshop"
+    
+    # Extract Writer / Reader Name
+    writer = re.findall(r'<pdf:Producer>([^<]+)</pdf:Producer>', raw_str)
+    if writer:
+        ps["Writer Name"] = writer[0]
+        ps["Reader Name"] = writer[0]
+    
+    # Dates
+    cdate = re.findall(r'xmp:CreateDate="([^"]+)"', raw_str) or re.findall(r'<xmp:CreateDate>([^<]+)</xmp:CreateDate>', raw_str)
+    if cdate: ps["Create Date"] = cdate[0]
+    mdate = re.findall(r'xmp:ModifyDate="([^"]+)"', raw_str) or re.findall(r'<xmp:ModifyDate>([^<]+)</xmp:ModifyDate>', raw_str)
+    if mdate: ps["Modify Date"] = mdate[0]
+    meta_date = re.findall(r'xmp:MetadataDate="([^"]+)"', raw_str) or re.findall(r'<xmp:MetadataDate>([^<]+)</xmp:MetadataDate>', raw_str)
+    if meta_date: ps["Metadata Date"] = meta_date[0]
+
+    # Quality & Format
+    qual = re.findall(r'photoshop:Quality="([^"]+)"', raw_str) or re.findall(r'<photoshop:Quality>([^<]+)</photoshop:Quality>', raw_str)
+    if qual: ps["Photoshop Quality"] = qual[0]
+    fmt = re.findall(r'photoshop:Format="([^"]+)"', raw_str) or re.findall(r'<photoshop:Format>([^<]+)</photoshop:Format>', raw_str)
+    if fmt: ps["Photoshop Format"] = fmt[0]
+
+    # Text layers
+    ln = re.findall(r'photoshop:LayerName="([^"]+)"', raw_str)
+    lt = re.findall(r'photoshop:LayerText="([^"]+)"', raw_str)
+    if ln:
+        ps["Text Layers"] = f"{len(ln)} detected"
+        layer_details = []
+        for i in range(max(len(ln), len(lt))):
+            name_val = ln[i] if i < len(ln) else "Layer"
+            txt_val = lt[i] if i < len(lt) else ""
+            layer_details.append(f"• <b>{name_val}:</b> <code>{txt_val}</code>")
+        ps["Text Layer Details"] = "\n".join(layer_details)
+
+    # Photoshop History
+    history = re.findall(r'stEvt:action="([^"]+)"\s+stEvt:instanceID="([^"]+)"\s+stEvt:when="([^"]+)"\s+stEvt:softwareAgent="([^"]+)"', raw_str)
+    if history:
+        hist_lines = []
+        for action, inst, when, agent in history[:5]:
+            hist_lines.append(f"  - [{action.capitalize()}] by {agent.split()[-1] if agent else 'Adobe'} at {when}")
+        if len(history) > 5:
+            hist_lines.append(f"  - ... ({len(history) - 5} more history events)")
+        ps["History"] = "\n".join(hist_lines)
+
+    # Embedded thumbnail check
+    if "photoshop:Thumbnail" in raw_str or (data.find(b'\xff\xd8', 2) != -1):
+        ps["Embedded Thumbnail"] = "Yes"
+
+    # Slice info
+    slices_count = len(re.findall(r'<photoshop:SliceID>', raw_str)) or len(re.findall(r'sliceID', raw_str))
+    if slices_count > 0:
+        ps["Slice Information"] = f"{slices_count} slice entries detected"
+
+    return ps
+
+
+def _extract_xmp_metadata(raw_str: str) -> dict:
+    xmp = {}
+    
+    # Dynamically find useful XMP properties (tiff, exch, dc, xmpMM)
+    # Check document ID, Creator, and namespaces
+    creator = re.findall(r'<dc:creator>([^<]+)</dc:creator>', raw_str)
+    if creator: xmp["Creator"] = creator[0]
+    
+    producer = re.findall(r'<pdf:Producer>([^<]+)</pdf:Producer>', raw_str)
+    if producer: xmp["Producer"] = producer[0]
+
+    doc_id = re.findall(r'xmpMM:DocumentID="([^"]+)"', raw_str)
+    if doc_id: xmp["Document ID"] = doc_id[0]
+
+    return xmp
+
+
+def _extract_iptc_metadata(data: bytes, raw_str: str) -> dict:
+    iptc = {}
+    
+    # Look for IPTC digest or keywords in binary/XMP representation
+    iptc_digest = re.findall(r'photoshop:IPTCDigest="([^"]+)"', raw_str)
+    if iptc_digest:
+        iptc["IPTC Digest"] = iptc_digest[0]
+        
+    return iptc
+
+
+def _extract_icc_profile(data: bytes) -> dict:
+    icc = {}
+    acsp_idx = data.find(b'acsp')
+    if acsp_idx >= 36:
+        profile_start = acsp_idx - 36
+        if profile_start + 128 <= len(data):
+            try:
+                # Basic parsing of ICC header fields
+                size = struct.unpack('>I', data[profile_start:profile_start+4])[0]
+                version_major = data[profile_start+8]
+                version_minor = (data[profile_start+9] >> 4) & 0x0F
+                
+                device_class = data[profile_start+12:profile_start+16].decode('latin-1', errors='ignore').strip()
+                color_space = data[profile_start+16:profile_start+20].decode('latin-1', errors='ignore').strip()
+                connection_space = data[profile_start+20:profile_start+24].decode('latin-1', errors='ignore').strip()
+                platform = data[profile_start+40:profile_start+44].decode('latin-1', errors='ignore').strip()
+                
+                icc["Profile Size"] = f"{size} bytes"
+                icc["Profile Version"] = f"{version_major}.{version_minor}"
+                if device_class: icc["Device Class"] = device_class
+                if color_space: icc["Color Space"] = color_space
+                if connection_space: icc["Connection Space"] = connection_space
+                if platform: icc["Platform"] = platform
+            except Exception:
+                pass
+    return icc
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -393,45 +456,42 @@ def _extract_xmp_photoshop_layers(data: bytes, raw_str: str, res: dict):
 
 def _perform_metadata_validation(data: bytes, res: dict, raw_str: str) -> dict:
     exif = res["exif_metadata"]
-    val = {
-        "Missing EXIF": "No (EXIF present)" if any(v != "Not Available" for v in exif.values()) else "Yes (EXIF stripped)",
-        "Edited Metadata": "None Detected",
-        "Inconsistent timestamps": "None Detected",
-        "Suspicious metadata": "None",
-    }
+    val = {}
+
+    has_exif = any(v != "Not Available" for v in exif.values())
+    if not has_exif:
+        val["Missing EXIF"] = "Yes (EXIF metadata stripped)"
 
     # Edited metadata checks
     soft = exif.get("Software", "")
-    if soft != "Not Available":
+    if soft:
         if any(sw in soft.lower() for sw in ("photoshop", "gimp", "canva", "exiftool", "paint.net", "lightroom")):
             val["Edited Metadata"] = f"Detected ({soft})"
 
-    # Check XMP history for edits
+    # Check Photoshop edits
     if "Adobe Photoshop" in raw_str or "photoshop:LayerName" in raw_str:
-        if val["Edited Metadata"] == "None Detected":
+        if "Edited Metadata" not in val:
             val["Edited Metadata"] = "Detected (Adobe Photoshop structures present)"
 
     # Timestamps consistency
     dt_orig = exif.get("Date Taken")
     dt_mod = exif.get("Date Modified")
-    if dt_orig != "Not Available" and dt_mod != "Not Available":
+    if dt_orig and dt_mod:
         try:
-            # Format usually YYYY:MM:DD HH:MM:SS
             fmt = "%Y:%m:%d %H:%M:%S"
             t_orig = datetime.strptime(dt_orig[:19], fmt)
             t_mod = datetime.strptime(dt_mod[:19], fmt)
             if t_mod < t_orig:
-                val["Inconsistent timestamps"] = f"Detected (ModifyDate {dt_mod} precedes CreateDate {dt_orig})"
+                val["Inconsistent timestamps"] = f"ModifyDate {dt_mod} precedes CreateDate {dt_orig}"
         except Exception:
             pass
 
     # Suspicious payloads in metadata
     susp_findings = []
-    for layer in res.get("raw_text_layers", []):
-        name, text = layer.get("name", ""), layer.get("text", "")
-        combined = f"{name} {text}"
-        if any(kw in combined.lower() for kw in ("flag", "ctf", "key", "secret", "passwd", "token", "http://", "https://")):
-            susp_findings.append(f"TextLayer payload detected: {combined[:60]}")
+    text_layers_list = re.findall(r'photoshop:LayerName="([^"]+)"', raw_str) + re.findall(r'photoshop:LayerText="([^"]+)"', raw_str)
+    for txt in text_layers_list:
+        if any(kw in txt.lower() for kw in ("flag", "ctf", "key", "secret", "passwd", "token", "http://", "https://")):
+            susp_findings.append(f"Suspicious TextLayer string: {txt[:60]}")
 
     if susp_findings:
         val["Suspicious metadata"] = "; ".join(susp_findings)
@@ -440,14 +500,8 @@ def _perform_metadata_validation(data: bytes, res: dict, raw_str: str) -> dict:
 
 
 def _perform_ai_detection(data: bytes, res: dict, raw_str: str) -> dict:
-    ai = {
-        "AI generated probability": "Low (5%)",
-        "Deepfake indicators": "None Detected",
-        "Synthetic image indicators": "None Detected",
-        "Manipulation confidence": "Low (10%)",
-    }
-
-    score = 5
+    ai = {}
+    score = 0
     clues = []
 
     # Check metadata prompts (Midjourney, DALL-E, Stable Diffusion, NovelAI, ComfyUI)
@@ -460,45 +514,23 @@ def _perform_ai_detection(data: bytes, res: dict, raw_str: str) -> dict:
         score += 85
         clues.append("AI prompt generation parameters detected in image structure")
 
-    # Check absence of camera software vs synthetic generation
-    exif = res["exif_metadata"]
-    if exif.get("Camera Make") == "Not Available" and exif.get("Software") == "Not Available":
-        score += 5
-
-    if score > 70:
-        ai["AI generated probability"] = f"High ({score}%)"
-        ai["Synthetic image indicators"] = "; ".join(clues) if clues else "Synthetic generation indicators detected"
-        ai["Manipulation confidence"] = f"High ({score}%)"
-    elif score > 30:
-        ai["AI generated probability"] = f"Moderate ({score}%)"
-        ai["Synthetic image indicators"] = "; ".join(clues) if clues else "Potential AI generation markers"
-        ai["Manipulation confidence"] = f"Moderate ({score}%)"
+    if score > 0:
+        ai["AI generated probability"] = f"{score}%"
+        ai["Synthetic image indicators"] = "; ".join(clues)
+        ai["Manipulation confidence"] = f"{score}%"
 
     return ai
 
 
 def _perform_manipulation_analysis(data: bytes, res: dict, raw_str: str) -> dict:
-    manip = {
-        "Error Level Analysis (ELA)": "Not Available",
-        "Double JPEG Detection": "Not Detected",
-        "Clone Detection": "Not Detected",
-        "Cropping Detection": "Not Detected",
-        "Resizing Detection": "Not Detected",
-        "Compression artifacts": "Not Available",
-        "Noise inconsistencies": "Uniform noise distribution",
-    }
+    manip = {}
 
-    # Compression artifacts
     ftype = res["file_info"].get("File type", "")
     if ftype == "JPEG":
         if b'\xff\xc2' in data or b'SOF2' in data:
             manip["Compression artifacts"] = "Progressive DCT, Huffman coding"
         else:
             manip["Compression artifacts"] = "Baseline DCT, Huffman coding"
-    elif ftype == "PNG":
-        manip["Compression artifacts"] = "Deflate non-lossy compression"
-    else:
-        manip["Compression artifacts"] = f"{ftype} standard compression"
 
     # Double JPEG Detection
     if ftype == "JPEG":
@@ -536,23 +568,14 @@ def _perform_manipulation_analysis(data: bytes, res: dict, raw_str: str) -> dict
                     var_diff = sum(stat.var) / len(stat.var)
                     if var_diff > 150:
                         manip["Error Level Analysis (ELA)"] = f"High error level variance (Mean: {mean_diff:.1f}, Var: {var_diff:.1f} - Potential splicing/editing)"
-                    else:
-                        manip["Error Level Analysis (ELA)"] = f"Uniform compression variance (Mean: {mean_diff:.1f}, Var: {var_diff:.1f})"
         except Exception:
-            manip["Error Level Analysis (ELA)"] = "Uniform compression variance"
+            pass
 
     return manip
 
 
 def _perform_hidden_data_detection(data: bytes, res: dict) -> dict:
-    hidden = {
-        "Steganography detection": "Not Detected",
-        "Hidden ZIP": "Not Detected",
-        "Hidden PDF": "Not Detected",
-        "Hidden payload": "Not Detected",
-        "Embedded files": "None",
-    }
-
+    hidden = {}
     embed_list = []
 
     # Check hidden ZIP archives (PK\x03\x04)
@@ -600,25 +623,25 @@ def _calculate_forensic_assessment(res: dict) -> dict:
     mv = res["metadata_validation"]
 
     # 1. High risk signals
-    if hd.get("Hidden payload") != "Not Detected" or hd.get("Hidden ZIP") != "Not Detected" or hd.get("Hidden PDF") != "Not Detected":
+    if hd.get("Hidden payload") or hd.get("Hidden ZIP") or hd.get("Hidden PDF"):
         risk = "HIGH RISK 🟠"
-        if hd.get("Hidden payload") != "Not Detected":
+        if hd.get("Hidden payload"):
             summary_bullets.append(f"Appended payload data detected ({hd['Hidden payload']}).")
-        if hd.get("Hidden ZIP") != "Not Detected":
+        if hd.get("Hidden ZIP"):
             summary_bullets.append(f"Embedded ZIP archive structure identified.")
-        if hd.get("Hidden PDF") != "Not Detected":
+        if hd.get("Hidden PDF"):
             summary_bullets.append(f"Embedded PDF document structure identified.")
 
     # 2. Suspicious signals
-    if mv.get("Edited Metadata") != "None Detected":
+    if mv.get("Edited Metadata"):
         if risk == "CLEAN 🟢": risk = "SUSPICIOUS 🟡"
         summary_bullets.append(f"Metadata demonstrates software modifications ({mv['Edited Metadata']}).")
 
-    if mv.get("Suspicious metadata") != "None":
+    if mv.get("Suspicious metadata"):
         if risk == "CLEAN 🟢": risk = "SUSPICIOUS 🟡"
         summary_bullets.append(f"Suspicious payload strings found in metadata ({mv['Suspicious metadata']}).")
 
-    if res["gps_analysis"].get("Google Maps link") != "Not Available":
+    if res["gps_analysis"].get("Google Maps link"):
         if risk == "CLEAN 🟢": risk = "SUSPICIOUS 🟡"
         summary_bullets.append(f"Sensitive GPS location coordinates embedded in image.")
 
@@ -633,14 +656,14 @@ def _calculate_forensic_assessment(res: dict) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# REPORT FORMATTER (REFINED FOR SOC/DFIR ANALYSTS)
+# REPORT FORMATTER (FULLY DYNAMIC & CONCISE FOR DFIR/SOC)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def format_metadata_report(analysis: dict) -> list[str]:
     """
-    Formats the refined digital forensic report.
-    Hides empty, unknown, not detected or uninformative metadata fields.
-    Summarizes Photoshop details instead of raw dumps.
+    Formats a strictly dynamic digital forensic report.
+    Hides empty, missing, or sentinel values entirely.
+    Summarizes Photoshop metadata elegantly.
     Omit sections entirely if empty.
     """
     import html as _h
@@ -648,56 +671,27 @@ def format_metadata_report(analysis: dict) -> list[str]:
     sep = "━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
     # Sentinel values that represent missing data
-    SENTINELS = {"Not Available", "None", "Unknown", "None Detected", "Not Detected", "N/A", "unknown", "none"}
-    
-    # Internal fields to hide completely
-    BLACKLIST = {
-        "exifbyteorder", "app14flags", "dctencodeversion", "colortransform",
-        "codedcharacterset", "filepermissions", "thumbnailoffset", "thumbnaillength",
-        "iptcdigest", "currentiptcdigest", "instanceid", "documentid",
-        "originaldocumentid", "historyinstanceid", "historysoftwareagent",
-        "historywhen", "historychanged", "historyaction", "slicesgroupname",
-        "numslices", "pixelaspectratio", "hasrealmergeddata", "writername",
-        "readername", "dctencodeversion"
-    }
-
-    # 1. Clean and summarize Photoshop data if present
-    exif = dict(analysis.get("exif_metadata", {}))
-    raw_str = exif.get("Software", "").lower()
-    is_photoshop = "photoshop" in raw_str or any("photoshop" in str(v).lower() for v in exif.values())
-    
-    if is_photoshop:
-        # Construct summary properties
-        exif["Software"] = exif.get("Software", "Adobe Photoshop")
-        exif["Edited"] = "Yes"
-        text_layers = analysis.get("raw_text_layers", [])
-        if text_layers:
-            exif["Text Layers"] = f"{len(text_layers)} detected"
-        if analysis.get("has_psd_thumbnail"):
-            exif["Thumbnail Embedded"] = "Yes"
-        
-        # Clean out any Photoshop internal fields from EXIF representation
-        for k in list(exif.keys()):
-            if k.lower() in BLACKLIST or "adobe" in k.lower():
-                exif.pop(k, None)
+    SENTINELS = {"Not Available", "None", "Unknown", "None Detected", "Not Detected", "N/A", "unknown", "none", "empty"}
 
     def _clean_dict(data_dict: dict) -> dict:
         cleaned = {}
         for k, v in data_dict.items():
-            k_low = k.lower().replace(" ", "").replace("_", "")
-            if k_low in BLACKLIST:
-                continue
             val_str = str(v).strip()
             if not val_str or any(s == val_str for s in SENTINELS):
                 continue
             cleaned[k] = val_str
         return cleaned
 
-    # Clean all input sections
+    # Clean all sections
     fi_c = _clean_dict(analysis.get("file_info", {}))
     ip_c = _clean_dict(analysis.get("image_properties", {}))
-    ex_c = _clean_dict(exif)
+    cam_c = _clean_dict(analysis.get("camera_information", {}))
+    ex_c = _clean_dict(analysis.get("exif_metadata", {}))
     gps_c = _clean_dict(analysis.get("gps_analysis", {}))
+    ps_c = _clean_dict(analysis.get("adobe_photoshop_analysis", {}))
+    xmp_c = _clean_dict(analysis.get("xmp_metadata", {}))
+    iptc_c = _clean_dict(analysis.get("iptc_metadata", {}))
+    icc_c = _clean_dict(analysis.get("icc_profile", {}))
     mv_c = _clean_dict(analysis.get("metadata_validation", {}))
     ai_c = _clean_dict(analysis.get("ai_detection", {}))
     ma_c = _clean_dict(analysis.get("manipulation_analysis", {}))
@@ -709,18 +703,26 @@ def format_metadata_report(analysis: dict) -> list[str]:
             return ""
         out = f"{emoji} <b>{title}</b>\n"
         for k, v in cleaned_dict.items():
-            if k == "Google Maps link":
+            if k == "Text Layer Details" or k == "History":
+                # Render multi-line details directly
+                out += f"• <b>{k}:</b>\n{v}\n"
+            elif k == "Google Maps link":
                 out += f"• <b>{k}:</b> {v}\n"
             else:
                 out += f"• <b>{k}:</b> <code>{_h.escape(v)}</code>\n"
         out += "\n"
         return out
 
-    # Build sections
+    # Build sections dynamically
     sec_file = _fmt_section("File Information", "📁", fi_c)
     sec_props = _fmt_section("Image Properties", "🖼", ip_c)
+    sec_cam = _fmt_section("Camera Information", "📷", cam_c)
     sec_exif = _fmt_section("EXIF Metadata", "📷", ex_c)
     sec_gps = _fmt_section("GPS Analysis", "🌍", gps_c)
+    sec_ps = _fmt_section("Adobe Photoshop Analysis", "🎨", ps_c)
+    sec_xmp = _fmt_section("XMP Metadata", "🧬", xmp_c)
+    sec_iptc = _fmt_section("IPTC Metadata", "🏷", iptc_c)
+    sec_icc = _fmt_section("ICC Profile", "🎨", icc_c)
     sec_val = _fmt_section("Metadata Validation", "🔎", mv_c)
     sec_ai = _fmt_section("AI Image Detection", "🧠", ai_c)
     sec_manip = _fmt_section("Image Manipulation Analysis", "🎨", ma_c)
@@ -739,32 +741,32 @@ def format_metadata_report(analysis: dict) -> list[str]:
             for b in bullets:
                 sec_assess += f"  - {_h.escape(b)}\n"
 
-    # Compile the final report text
+    # Compile the final report pages
     header = f"🔬 <b>DIGITAL FORENSIC IMAGE REPORT</b>\n<code>{sep}</code>\n\n"
 
-    # Only add sections that contain fields
-    blocks = []
-    
-    first_block = header + sec_file + sec_props
-    if first_block.strip() != header.strip():
-        blocks.append(first_block)
-        
-    if sec_exif or sec_gps:
-        blocks.append(sec_exif + sec_gps)
-        
-    if sec_val or sec_ai:
-        blocks.append(sec_val + sec_ai)
-        
-    if sec_manip or sec_hidden or sec_assess:
-        blocks.append(sec_manip + sec_hidden + sec_assess)
+    # Group sections logically into page blocks
+    blocks = [
+        header + sec_file + sec_props,
+        sec_cam + sec_exif + sec_gps,
+        sec_ps + sec_xmp + sec_iptc + sec_icc,
+        sec_val + sec_ai + sec_manip + sec_hidden + sec_assess,
+    ]
 
-    # Paginate carefully for Telegram message constraints
     current_page = ""
     for block in blocks:
-        if len(current_page) + len(block) > 3800:
+        # Strip trailing newlines from block content
+        cleaned_block = block.strip()
+        if not cleaned_block or cleaned_block == header.strip():
+            continue
+            
+        if len(current_page) + len(cleaned_block) > 3800:
             pages.append(current_page.strip())
             current_page = ""
-        current_page += block
+            
+        if current_page:
+            current_page += "\n\n" + cleaned_block
+        else:
+            current_page = cleaned_block
 
     if current_page.strip():
         pages.append(current_page.strip())
