@@ -292,57 +292,45 @@ async def probe_username_platform(
 
 async def run_username_scan(username: str, progress_callback=None) -> list:
     """
-    Runs username scans across all platforms using a Semaphore.
+    Generates profile links instantly without network requests, allowing the user
+    to click and verify the profiles themselves.
     """
-    sem = asyncio.Semaphore(15)
-    limits = httpx.Limits(max_keepalive_connections=5, max_connections=20)
-    
     results = []
-    async with httpx.AsyncClient(limits=limits, follow_redirects=True) as client:
-        tasks = []
-        for name, config in PLATFORMS.items():
-            tasks.append(probe_username_platform(client, name, config, username, sem))
-        
-        completed_count = 0
-        total_tasks = len(tasks)
-        
-        for future in asyncio.as_completed(tasks):
-            res = await future
-            results.append(res)
-            completed_count += 1
-            if progress_callback and completed_count % 10 == 0:
-                await progress_callback(completed_count, total_tasks)
-                
+    for name, config in PLATFORMS.items():
+        url = config["url"].format(u=username)
+        category = config["category"]
+        results.append({
+            "platform": name,
+            "url": url,
+            "category": category,
+            "status": "Generative",
+            "emoji": "•",
+            "confidence": 100
+        })
+    if progress_callback:
+        await progress_callback(len(results), len(results))
     return results
 
 def compute_confidence_score(results: list) -> int:
-    """
-    Computes an overall confidence score based on positive findings and their relative strengths.
-    """
-    positive_results = [r for r in results if r["status"] in ("Found", "Manual Check Required")]
-    if not positive_results:
-        return 0
-    
-    total_score = sum(r["confidence"] for r in positive_results)
-    return int(total_score / len(positive_results))
+    return 100
 
 def format_report_messages(username: str, results: list) -> list:
     """
-    Formats the categorized scanning report into one or more Telegram messages (splitting if needed).
-    Only displays Found and Manual Check Required items in the body.
+    Formats the categorized scanning report into one or more Telegram messages.
+    Lists all 20 famous platforms with direct profile links for user verification.
     """
-    found_count = len([r for r in results if r["status"] == "Found"])
-    manual_count = len([r for r in results if r["status"] == "Manual Check Required"])
-    not_found_count = len([
-        r for r in results
-        if r["status"] == "Not Found" or "Error" in r["status"] or r["status"] == "Timeout"
-    ])
+    # Group results into Lullar-style categories
+    categories = {
+        "Social Media": [],
+        "Messaging": [],
+        "Streaming & Gaming": []
+    }
     
-    confidence = compute_confidence_score(results)
-    
-    categories = {}
     for r in results:
         cat = r["category"]
+        if cat in ("Gaming", "Streaming"):
+            cat = "Streaming & Gaming"
+            
         if cat not in categories:
             categories[cat] = []
         categories[cat].append(r)
@@ -350,64 +338,59 @@ def format_report_messages(username: str, results: list) -> list:
     sep = "━━━━━━━━━━━━━━━━━━━━━━"
     
     header = (
-        f"🕵️ USERNAME IDENTITY REPORT\n"
-        f"{sep}\n\n"
-        f"<b>Target</b>          <code>{username}</code>\n\n"
-        f"<b>Platforms</b>       {len(results)}\n"
-        f"<b>Found</b>           {found_count}\n"
-        f"<b>Manual Review</b>   {manual_count}\n"
-        f"<b>Not Found</b>       {not_found_count}\n\n"
-        f"{sep}\n"
+        f"🕵️‍♂️ <b>USERNAME IDENTITY REPORT</b>\n"
+        f"<code>{sep}</code>\n\n"
+        f"<b>Target</b>          <code>{username}</code>\n"
+        f"<b>Platforms</b>       {len(results)}\n\n"
+        f"<code>{sep}</code>\n"
     )
     
-    # Pre-defined categories and emojis in order of display
     cat_order = [
-        ("Social Media", "🌐 SOCIAL MEDIA"),
-        ("Messaging", "💬 MESSAGING"),
-        ("Gaming", "🎮 GAMING"),
-        ("Streaming", "📺 STREAMING"),
+        ("Social Media", "👥 Social Media"),
+        ("Messaging", "💬 Messaging"),
+        ("Streaming & Gaming", "🎮 Streaming & Gaming"),
     ]
     
     body_parts = []
     
     for cat_key, cat_title in cat_order:
         items = categories.get(cat_key, [])
-        # Only keep Found and Manual Check
-        positive_items = [
-            i for i in items
-            if i["status"] in ("Found", "Manual Check Required")
-        ]
-        if not positive_items:
+        if not items:
             continue
             
-        # Sort: Found (🟢) first, then Manual (⚠️)
-        positive_items.sort(key=lambda x: 0 if x["status"] == "Found" else 1)
-        
-        cat_str = f"{cat_title}\n\n"
-        for item in positive_items:
-            em = "🟢" if item["status"] == "Found" else "⚠️"
-            cat_str += f"{em} <a href=\"{item['url']}\">{item['platform']}</a>\n"
+        cat_str = f"<b>{cat_title}</b>\n\n"
+        for item in items:
+            cat_str += f"• <a href=\"{item['url']}\">{item['platform']}</a>\n"
             
-        body_parts.append(cat_str + "\n" + sep + "\n")
+        body_parts.append(cat_str + "\n" + f"<code>{sep}</code>" + "\n")
         
-    footer = f"<b>Confidence Score: {confidence}%</b>"
-    
     messages = []
     current_msg = header
     
     for part in body_parts:
-        if len(current_msg) + len(part) + len(footer) > 4000:
+        if len(current_msg) + len(part) > 4000:
             messages.append(current_msg.rstrip())
             current_msg = ""
         current_msg += part
         
-    current_msg += footer
-    messages.append(current_msg)
-    
+    messages.append(current_msg.rstrip())
     return messages
 
 
 async def test_scan(username: str):
+    """
+    Test helper to run via command line
+    """
+    print(f"Scanning '{username}' across {len(PLATFORMS)} platforms...")
+    
+    async def cb(current, total):
+        print(f"Progress: {current}/{total} probed...")
+        
+    results = await run_username_scan(username, progress_callback=cb)
+    msgs = format_report_messages(username, results)
+    for idx, msg in enumerate(msgs):
+        print(f"--- MESSAGE {idx+1} ---")
+        print(msg)
     """
     Test helper to run via command line
     """
