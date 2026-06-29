@@ -99,7 +99,35 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
+from http.server import BaseHTTPRequestHandler
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"OK")
+    def log_message(self, format, *args):
+        pass  # suppress log spam
+
+
+def run_dummy_server():
+    import os
+    port = int(os.getenv("PORT", "8080"))
+    try:
+        from http.server import HTTPServer
+        server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+        logger.info(f"🟢 Health check server listening on port {port}")
+        server.serve_forever()
+    except Exception as e:
+        logger.error(f"🔴 Failed to start health check server: {e}")
+
+
 def main():
+    # ── Start health check server for Render compatibility ────────────────────
+    import threading
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+
     # ── Init DB ───────────────────────────────────────────────────────────────
     db.init_db()
     logger.info("✅ Database initialized.")
