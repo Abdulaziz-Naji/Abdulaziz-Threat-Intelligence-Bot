@@ -1,0 +1,25 @@
+[Unit]
+Description=Abdulaziz Threat Intelligence Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/threat-intel-bot
+ExecStart=/opt/threat-intel-bot/venv/bin/python main.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=threat-intel-bot
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/threat-intel-bot
+
+[Install]
+WantedBy=multi-user.target
