@@ -559,130 +559,156 @@ def _calculate_findings_and_notes(res: dict) -> Tuple[List[str], List[str]]:
 
 def format_metadata_report(analysis: dict) -> list[str]:
     """
-    Formats the raw analysis dictionary into exhaustive aligned code blocks matching ExifTool output.
-    Never hides, summarizes, or collapses any discovered metadata field.
+    Formats the forensic analysis into a clean, concise, refined report.
+    Hides empty, unknown, and low-level internal fields. Summarizes Photoshop/XMP data.
     """
     import html as _h
     pages = []
     sep = "━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    def _fmt_section_table(title: str, emoji: str, data_dict: dict) -> str:
+    # Filter rules for values we omit
+    OMIT_VALUES = ("not available", "not performed", "none", "unknown", "clean binary stream", "(none)")
+    
+    # Low-level fields we want to completely filter out
+    OMIT_KEYS = {
+        "ExifByteOrder", "APP14Flags", "APP14Flags0", "APP14Flags1", "DCTEncodeVersion",
+        "ColorTransform", "CodedCharacterSet", "FilePermissions", "ThumbnailOffset",
+        "ThumbnailLength", "IPTCDigest", "CurrentIPTCDigest", "InstanceID", "HistoryInstanceID",
+        "DocumentID", "OriginalDocumentID", "Instance ID", "Document ID", "Original Document ID",
+        "Layers Group Info", "IDs Base Value", "Target Layer ID", "Layer Selection IDs",
+        "Layer Groups Enabled ID", "BW Halftoning Info", "BW Transfer Func", "ICC Untagged",
+        "GlobalAngle", "GlobalAltitude", "PrintStyle", "PrintPosition", "PrintScale",
+        "DisplayedUnitsX", "DisplayedUnitsY", "URL_List", "SlicesGroupName"
+    }
+
+    def _fmt_clean_section(title: str, emoji: str, data_dict: dict) -> str:
         if not data_dict:
             return ""
         
-        # Calculate max key length for clean alignment
-        max_k = max(len(str(k)) for k in data_dict.keys()) if data_dict else 20
+        filtered = {}
+        for k, v in data_dict.items():
+            if k in OMIT_KEYS:
+                continue
+            val_str = str(v).strip()
+            if val_str.lower() in OMIT_VALUES or not val_str:
+                continue
+            filtered[k] = val_str
+
+        if not filtered:
+            return ""
+
+        max_k = max(len(str(k)) for k in filtered.keys()) if filtered else 20
         max_k = max(max_k, 15)
 
         table_lines = []
-        for k, v in data_dict.items():
+        for k, v in filtered.items():
             k_str = str(k).ljust(max_k)
-            v_str = str(v)
-            table_lines.append(f"{k_str} : {v_str}")
+            # Custom formatting for links
+            if k == "Google Maps link":
+                table_lines.append(f"{k_str} : [Link Below]")
+            else:
+                table_lines.append(f"{k_str} : {v}")
 
         table_content = "\n".join(table_lines)
-        return f"{emoji} <b>{title}</b>\n<pre>{_h.escape(table_content)}</pre>\n\n"
+        out = f"{emoji} <b>{title}</b>\n<pre>{_h.escape(table_content)}</pre>\n"
+        if "Google Maps link" in filtered:
+            out += f"📍 <b>Google Maps:</b> {filtered['Google Maps link']}\n"
+        out += "\n"
+        return out
 
     blocks = []
 
     # Header
-    hdr = f"🔬 <b>DIGITAL FORENSIC IMAGE REPORT (EXIFTOOL PARITY)</b>\n<code>{sep}</code>\n\n"
+    hdr = f"🔬 <b>DIGITAL FORENSICS REPORT</b>\n<code>{sep}</code>\n\n"
 
-    # 1. File Information & Signatures & Hashes
-    b1 = hdr + _fmt_section_table("File Information", "📁", analysis.get("file_info", {}))
-    b1 += _fmt_section_table("File Signature", "🔑", analysis.get("file_signature", {}))
-    b1 += _fmt_section_table("File Hashes", "🔒", analysis.get("hashes", {}))
-    b1 += _fmt_section_table("MIME Validation", "🛡", analysis.get("mime_validation", {}))
-    blocks.append(b1)
+    # 1. File Information & Hashes
+    file_info = analysis.get("file_info", {})
+    hashes = analysis.get("hashes", {})
+    mime_val = analysis.get("mime_validation", {})
+    
+    file_block = hdr
+    file_block += _fmt_clean_section("File Information", "📁", file_info)
+    file_block += _fmt_clean_section("Hashes", "🔒", hashes)
+    file_block += _fmt_clean_section("MIME Validation", "🛡", mime_val)
+    blocks.append(file_block)
 
-    # 2. Image Properties & Compression Details & JPEG Structure
-    b2 = _fmt_section_table("Image Properties", "🖼", analysis.get("image_properties", {}))
-    b2 += _fmt_section_table("Compression Details", "📦", analysis.get("compression_details", {}))
-    b2 += _fmt_section_table("JPEG Structure", "📐", analysis.get("jpeg_structure", {}))
-    blocks.append(b2)
+    # 2. Image Properties
+    props = analysis.get("image_properties", {})
+    blocks.append(_fmt_clean_section("Image Properties", "🖼", props))
 
-    # 3. EXIF Metadata & Camera Info
-    b3 = _fmt_section_table("EXIF Metadata", "📷", analysis.get("exif_metadata", {}))
-    if analysis.get("camera_information"):
-        b3 += _fmt_section_table("Camera Information", "🎥", analysis.get("camera_information", {}))
-    blocks.append(b3)
+    # 3. Camera & EXIF
+    exif = analysis.get("exif_metadata", {})
+    cam = analysis.get("camera_information", {})
+    
+    # Remove camera duplicates from EXIF block
+    clean_exif = {k: v for k, v in exif.items() if k not in cam}
+    exif_block = _fmt_clean_section("EXIF Metadata", "📷", clean_exif)
+    exif_block += _fmt_clean_section("Camera Information", "🎥", cam)
+    blocks.append(exif_block)
 
     # 4. GPS Analysis
     gps_d = analysis.get("gps", {})
-    if gps_d:
-        g_text = "🌍 <b>GPS Analysis</b>\n<pre>"
-        max_k = max(len(str(k)) for k in gps_d.keys())
-        for k, v in gps_d.items():
-            if k == "Google Maps link":
-                g_text += f"{str(k).ljust(max_k)} : [Clickable Link Below]\n"
-            else:
-                g_text += f"{str(k).ljust(max_k)} : {v}\n"
-        g_text += "</pre>"
-        if "Google Maps link" in gps_d:
-            g_text += f"📍 <b>Google Maps:</b> {gps_d['Google Maps link']}\n"
-        g_text += "\n"
-        blocks.append(g_text)
+    blocks.append(_fmt_clean_section("GPS Analysis", "🌍", gps_d))
 
-    # 5. Dedicated Adobe Photoshop Analysis
-    ps_d = analysis.get("photoshop_metadata", {})
-    if ps_d:
-        blocks.append(_fmt_section_table("Adobe Photoshop Metadata", "🎨", ps_d))
+    # 5. Summary of Photoshop Metadata (Adobe Photoshop Analysis)
+    ps_meta = analysis.get("photoshop_metadata", {})
+    ps_history = analysis.get("photoshop_history", {})
+    layers = analysis.get("text_layers", {})
+    thumb = analysis.get("thumbnail_information", {})
 
-    # 6. Photoshop History
-    hist_d = analysis.get("photoshop_history", {})
-    if hist_d:
-        blocks.append(_fmt_section_table("Photoshop History", "📜", hist_d))
+    if ps_meta or ps_history or layers:
+        ps_summary = {}
+        software = exif.get("Software") or exif.get("Software", "Adobe Photoshop")
+        if software and software != "Not Available":
+            ps_summary["Software"] = software
+        
+        ps_summary["Edited"] = "Yes (Adobe Photoshop signature detected)"
+        
+        if layers.get("TextLayerName") or layers.get("TextLayerText"):
+            layer_count = len(layers.get("TextLayerName", "").split(","))
+            ps_summary["Text Layers"] = f"{layer_count} detected"
+            
+        if thumb:
+            ps_summary["Thumbnail Embedded"] = "Yes"
+            
+        if ps_meta.get("PhotoshopQuality"):
+            ps_summary["Photoshop Quality"] = ps_meta["PhotoshopQuality"]
+            
+        if ps_meta.get("PhotoshopFormat"):
+            ps_summary["Photoshop Format"] = ps_meta["PhotoshopFormat"]
 
-    # 7. Document IDs & Slices
-    doc_d = analysis.get("document_ids", {})
-    if doc_d:
-        blocks.append(_fmt_section_table("Document IDs", "🆔", doc_d))
+        blocks.append(_fmt_clean_section("Adobe Photoshop Analysis", "🎨", ps_summary))
 
-    slice_d = analysis.get("slice_information", {})
-    if slice_d:
-        blocks.append(_fmt_section_table("Slice Information", "✂️", slice_d))
+    # 6. Dedicated Text Layers Section (if present)
+    if layers:
+        blocks.append(_fmt_clean_section("Photoshop Text Layers", "🖼", layers))
 
-    # 8. Dedicated Text Layers Section
-    layers_d = analysis.get("text_layers", {})
-    if layers_d:
-        blocks.append(_fmt_section_table("Photoshop Text Layers", "🖼", layers_d))
+    # 7. Advanced Forensic Tests
+    tests = analysis.get("advanced_forensic_tests", {})
+    blocks.append(_fmt_clean_section("Advanced Forensic Tests", "🔬", tests))
 
-    # 9. Dedicated XMP Metadata & IPTC Metadata & ICC Profile
-    xmp_d = analysis.get("xmp_metadata", {})
-    if xmp_d:
-        blocks.append(_fmt_section_table("XMP Metadata", "🧬", xmp_d))
+    # 8. Hidden Data & Payloads
+    hidden_files = analysis.get("hidden_files", {})
+    hidden_payloads = analysis.get("hidden_payloads", {})
+    steg = analysis.get("steganography_analysis", {})
+    strings = analysis.get("strings_analysis", {})
+    
+    hidden_block = _fmt_clean_section("Hidden Files", "🕵", hidden_files)
+    hidden_block += _fmt_clean_section("Hidden Payloads", "💣", hidden_payloads)
+    hidden_block += _fmt_clean_section("Steganography Analysis", "🔍", steg)
+    hidden_block += _fmt_clean_section("Strings Analysis", "🔤", strings)
+    blocks.append(hidden_block)
 
-    iptc_d = analysis.get("iptc_metadata", {})
-    if iptc_d:
-        blocks.append(_fmt_section_table("IPTC Metadata", "📑", iptc_d))
-
-    icc_d = analysis.get("icc_profile", {})
-    if icc_d:
-        blocks.append(_fmt_section_table("ICC Color Profile", "🌈", icc_d))
-
-    # 10. Thumbnail Information
-    thumb_d = analysis.get("thumbnail_information", {})
-    if thumb_d:
-        blocks.append(_fmt_section_table("Thumbnail Information", "📸", thumb_d))
-
-    # 11. Advanced Forensic Tests & Binary Analysis & Hidden Data
-    b_adv = _fmt_section_table("Advanced Forensic Tests", "🔬", analysis.get("advanced_forensic_tests", {}))
-    b_adv += _fmt_section_table("Binary Analysis", "💻", analysis.get("binary_analysis", {}))
-    b_adv += _fmt_section_table("Hidden Files", "🕵", analysis.get("hidden_files", {}))
-    b_adv += _fmt_section_table("Hidden Payloads", "💣", analysis.get("hidden_payloads", {}))
-    b_adv += _fmt_section_table("Steganography Analysis", "🔍", analysis.get("steganography_analysis", {}))
-    if analysis.get("strings_analysis"):
-        b_adv += _fmt_section_table("Strings Analysis", "🔤", analysis.get("strings_analysis", {}))
-    blocks.append(b_adv)
-
-    # 12. Forensic Findings & Analyst Notes
+    # 9. Forensic Findings & Analyst Notes
     ff = analysis.get("forensic_findings", [])
     an = analysis.get("analyst_notes", [])
     
-    f_text = "🔬 <b>Forensic Findings</b>\n"
-    for f in ff:
-        f_text += f"• {_h.escape(f)}\n"
-    f_text += "\n"
+    f_text = ""
+    if ff:
+        f_text += "🔬 <b>Forensic Findings</b>\n"
+        for f in ff:
+            f_text += f"• {_h.escape(f)}\n"
+        f_text += "\n"
 
     if an:
         f_text += "📝 <b>Analyst Notes</b>\n"
@@ -692,7 +718,7 @@ def format_metadata_report(analysis: dict) -> list[str]:
 
     blocks.append(f_text)
 
-    # Paginate into clean Telegram HTML chunks (max 3800 chars)
+    # Paginate blocks into clean Telegram HTML chunks (max 3800 chars)
     current_page = ""
     for b in blocks:
         if not b.strip(): continue
@@ -705,3 +731,4 @@ def format_metadata_report(analysis: dict) -> list[str]:
         pages.append(current_page.strip())
 
     return pages
+
