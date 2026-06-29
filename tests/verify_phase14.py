@@ -1,6 +1,6 @@
 """
 tests/verify_phase14.py — Username OSINT platform list verification.
-Verifies the 20 curated platforms are present and categories are correct.
+Verifies the full Lullar-style platform list is present.
 """
 import sys
 import os
@@ -21,36 +21,39 @@ def check(name, condition, extra=''):
         _FAIL += 1
         print(f'  \u274c FAIL  {name}' + (f'\n       {extra}' if extra else ''))
 
-print('\n═══ PHASE 14: Username OSINT Platform List ═══\n')
+print('\n\u2550\u2550\u2550 PHASE 14: Username OSINT Platform List \u2550\u2550\u2550\n')
 
 REQUIRED = {
-    'Social Media': ['X (Twitter)', 'Instagram', 'Facebook', 'Threads', 'TikTok', 'Snapchat', 'Reddit', 'Pinterest', 'Bluesky', 'LinkedIn'],
-    'Messaging':    ['Telegram', 'Discord', 'Signal'],
-    'Gaming':       ['Steam', 'PlayStation', 'Xbox', 'Roblox'],
-    'Streaming':    ['Twitch', 'YouTube', 'Kick'],
+    'Social Media': ['X (Twitter)', 'Instagram', 'Facebook', 'Threads', 'TikTok',
+                     'Snapchat', 'Reddit', 'Pinterest', 'Bluesky', 'LinkedIn'],
+    'Messaging':    ['Telegram', 'Line', 'Viber', 'Zalo'],
+    'Streaming & Gaming': ['Twitch', 'Kick', 'Steam', 'Roblox'],
+    'Music & Audio': ['Spotify', 'SoundCloud', 'Bandcamp'],
+    'Video': ['Vimeo', 'Rumble', 'Dailymotion'],
+    'Writing & Knowledge': ['Medium', 'Substack', 'Quora'],
+    'Developer': ['GitHub', 'GitLab', 'Stack Overflow'],
+    'Design & Photo': ['Dribbble', 'Behance', 'ArtStation'],
+    'Professional': ['Fiverr', 'Upwork', 'Freelancer'],
+    'Blogging & Web': ['Linktree', 'WordPress', 'Gravatar'],
+    'Commerce': ['Etsy', 'eBay', 'Ko-fi'],
+    'Web3 & Crypto': ['Farcaster', 'ENS'],
+    'Other': ['Letterboxd', 'Duolingo', 'MyAnimeList'],
 }
 
-REMOVED_CATEGORIES = ['Developer', 'Design', 'Writing', 'Academic', 'Lifestyle', 'Music', 'Link-in-Bio']
-
-print('── TEST 1: Required platforms present ──')
+print('\u2500\u2500 TEST 1: Required platforms present \u2500\u2500')
 all_names = list(PLATFORMS.keys())
 for category, platforms in REQUIRED.items():
     for platform in platforms:
-        check(f'{category}: {platform} present', platform in all_names, f'Missing from PLATFORMS list')
+        check(f'{category}: {platform} present', platform in all_names,
+              f'Missing from PLATFORMS list')
 
-print('\n── TEST 2: Removed categories gone ──')
-all_cats = [info.get('category', '') for info in PLATFORMS.values()]
-for removed in REMOVED_CATEGORIES:
-    found = any(removed.lower() in c.lower() for c in all_cats)
-    check(f'Category "{removed}" removed', not found, f'Still found in PLATFORMS')
-
-print('\n── TEST 3: Platform count ──')
-check(f'At least 20 platforms defined', len(PLATFORMS) >= 20, f'Got {len(PLATFORMS)}')
+print('\n\u2500\u2500 TEST 2: Platform count \u2500\u2500')
+check(f'At least 100 platforms defined', len(PLATFORMS) >= 100, f'Got {len(PLATFORMS)}')
 
 print(f"""
-════════════════════════════════════════════════════
-  Phase 14 Username OSINT — {'PASSED' if _FAIL == 0 else 'ISSUES FOUND'}
-════════════════════════════════════════════════════
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
+  Phase 14 Username OSINT \u2014 {'PASSED' if _FAIL == 0 else 'ISSUES FOUND'}
+\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550
   Results: {_PASS} passed, {_FAIL} failed
 """)
 sys.exit(0 if _FAIL == 0 else 1)
