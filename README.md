@@ -6,7 +6,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Telegram](https://img.shields.io/badge/Telegram-Bot-blue?logo=telegram)](https://telegram.org/)
+[![Telegram](https://img.shields.io/badge/Telegram-Bot-blue?logo=telegram)](https://t.me/abdulaziz_threatintel_bot)
 [![CI](https://github.com/Abdulaziz-Naji/Abdulaziz-threat-intelligence-bot/actions/workflows/ci.yml/badge.svg)](https://github.com/Abdulaziz-Naji/Abdulaziz-threat-intelligence-bot/actions)
 
 [Telegram Demo](#-demo) · [Quick Start](#-quick-start) · [Deployment Guide](docs/DEPLOYMENT.md) · [Commands](#-commands)
@@ -352,9 +352,8 @@ The author assumes no liability for misuse.
 
 ---
 
-## 📬 Demo
-
-> *Telegram demo link coming soon*
+You can interact with the live, production-deployed Telegram bot here:
+**[abdulaziz_threatintel_bot](https://t.me/abdulaziz_threatintel_bot)**
 
 ---
 
