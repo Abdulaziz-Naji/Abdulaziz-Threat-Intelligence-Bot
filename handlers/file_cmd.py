@@ -55,23 +55,67 @@ def detect_file_type(data: bytes, filename: str) -> str:
 # ── Parser Helpers ─────────────────────────────────────────────────────────────
 
 def parse_image_exif(data: bytes) -> dict:
-    """Extract EXIF metadata from image bytes."""
+    """Extract full EXIF and XMP metadata from image bytes, returning strictly existing fields."""
     exif_data = {}
     try:
         img = Image.open(io.BytesIO(data))
-        info = img._getexif()
+        # Basic Image Attributes
+        exif_data["ImageWidth"] = str(img.width)
+        exif_data["ImageHeight"] = str(img.height)
+        exif_data["FileType"] = img.format if img.format else "JPEG"
+        if hasattr(img, "mode"):
+            exif_data["ColorMode"] = img.mode
+
+        # Standard EXIF Tags
+        info = img._getexif() if hasattr(img, "_getexif") else None
         if info:
             for tag, value in info.items():
                 decoded = TAGS.get(tag, tag)
-                if isinstance(value, bytes):
-                    try:
-                        value = value.decode('utf-8', errors='ignore')
-                    except Exception:
-                        pass
-                exif_data[str(decoded)] = str(value)
+                if value is not None and str(value).strip() != "":
+                    if isinstance(value, bytes):
+                        try:
+                            value = value.decode('utf-8', errors='ignore')
+                        except Exception:
+                            value = repr(value)
+                    exif_data[str(decoded)] = str(value)
+                    
+        # Extract XMP / Photoshop Metadata if present in binary strings
+        import re
+        data_str = data.decode('latin-1', errors='ignore')
+        
+        # Look for TextLayerName / TextLayerText
+        text_layers = re.findall(r'photoshop:LayerName="([^"]+)"', data_str)
+        if text_layers:
+            exif_data["TextLayerName"] = ", ".join(text_layers)
+            
+        text_texts = re.findall(r'photoshop:LayerText="([^"]+)"', data_str)
+        if text_texts:
+            exif_data["TextLayerText"] = ", ".join(text_texts)
+            
+        # Software & Software Agent
+        softwares = re.findall(r'stEvt:softwareAgent="([^"]+)"', data_str)
+        if softwares and "Software" not in exif_data:
+            exif_data["Software"] = ", ".join(set(softwares))
+            
+        # CreateDate / ModifyDate from XMP
+        create_dates = re.findall(r'xmp:CreateDate="([^"]+)"', data_str)
+        if create_dates and "CreateDate" not in exif_data:
+            exif_data["CreateDate"] = create_dates[0]
+            
+        modify_dates = re.findall(r'xmp:ModifyDate="([^"]+)"', data_str)
+        if modify_dates and "ModifyDate" not in exif_data:
+            exif_data["ModifyDate"] = modify_dates[0]
+
     except Exception as e:
-        exif_data["error"] = f"EXIF parsing error: {e}"
-    return exif_data
+        logger.warning(f"Error parsing image metadata: {e}")
+    
+    # Filter out empty or binary placeholder values
+    clean_meta = {}
+    for k, v in exif_data.items():
+        if v and not v.startswith("(Binary data"):
+            clean_meta[k] = v
+    return clean_meta
+
 
 
 def parse_pdf(data: bytes) -> dict:
@@ -295,31 +339,21 @@ async def file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if ftype in ("png", "jpg", "jpeg", "gif", "webp"):
             exif = parse_image_exif(file_bytes)
             if exif:
-                # Format some fields
-                software = exif.get("Software")
-                gps = exif.get("GPSInfo")
-                date_time = exif.get("DateTime")
-                
-                metadata_summary += f"<b>🖼 Image Properties:</b>\n"
-                if date_time:
-                    metadata_summary += f"  • Captured: <code>{date_time}</code>\n"
-                if software:
-                    metadata_summary += f"  • Software: <code>{software}</code>\n"
-                    # Mismatch anomaly check
-                    if any(sw in software.lower() for sw in ("gimp", "photoshop", "exiftool", "paint.net", "canva")):
-                        anomalies.append(f"Image modified using <b>{software}</b>")
-                if gps:
-                    metadata_summary += f"  • GPS Location data present 📍\n"
-                    anomalies.append("GPS location tags exposed in image")
-                
-                # Check pixel dimensions
-                try:
-                    img = Image.open(io.BytesIO(file_bytes))
-                    metadata_summary += f"  • Dimensions: <code>{img.width}x{img.height}</code>\n"
-                except Exception:
-                    pass
+                metadata_summary += f"<b>🖼 Extracted Metadata (Present Fields Only):</b>\n"
+                for key, val in exif.items():
+                    # Hide internal or giant structures unless relevant
+                    if key in ("GPSInfo", "MakerNote") and len(str(val)) > 80:
+                        val = "[Binary / Struct Data]"
+                    metadata_summary += f"  • <b>{key}:</b> <code>{val}</code>\n"
+                    
+                software = exif.get("Software", "")
+                if any(sw in software.lower() for sw in ("gimp", "photoshop", "exiftool", "paint.net", "canva")):
+                    anomalies.append(f"Image modified using software: <b>{software}</b>")
+                if "GPSInfo" in exif:
+                    anomalies.append("GPS location tags exposed in image metadata")
             else:
-                metadata_summary += "<i>No EXIF metadata found.</i>\n"
+                metadata_summary += "<i>No EXIF/Metadata fields found in image.</i>\n"
+
                 
         elif ftype == "pdf":
             pdf = parse_pdf(file_bytes)
