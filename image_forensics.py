@@ -261,8 +261,10 @@ def _parse_exif_ifd(data: bytes, out: dict):
         byte_order = data[:2]
         if byte_order == b'MM':
             endian = '>'
+            out["ExifByteOrder"] = "Big-endian (Motorola, MM)"
         elif byte_order == b'II':
             endian = '<'
+            out["ExifByteOrder"] = "Little-endian (Intel, II)"
         else:
             return
 
@@ -283,22 +285,28 @@ def _parse_exif_ifd(data: bytes, out: dict):
                 tag_name = TAGS.get(tag_id, f"Tag0x{tag_id:04X}")
                 value = _decode_exif_value(data, endian, type_id, value_count, value_raw)
                 if value is not None:
-                    tags[str(tag_name)] = str(value)
+                    # Map numerical values to standard ExifTool text descriptors
+                    value_str = _get_exif_mapped_value(str(tag_name), value)
+                    tags[str(tag_name)] = value_str
             return tags
 
         ifd0 = read_ifd(ifd0_offset)
         out.update(ifd0)
 
         # ExifIFD sub-IFD
-        if "ExifOffset" in ifd0:
+        exif_offset = ifd0.get("ExifOffset") or ifd0.get("Tag0x8769")
+        if exif_offset:
             try:
-                exif_ifd = read_ifd(int(ifd0["ExifOffset"]))
+                exif_ifd = read_ifd(int(exif_offset))
                 out.update(exif_ifd)
             except Exception:
                 pass
-        if "GPSInfo" in ifd0:
+
+        # GPSInfo sub-IFD
+        gps_offset = ifd0.get("GPSInfo") or ifd0.get("Tag0x8825")
+        if gps_offset:
             try:
-                gps_ifd = read_ifd(int(ifd0["GPSInfo"]))
+                gps_ifd = read_ifd(int(gps_offset))
                 for k, v in gps_ifd.items():
                     gname = GPSTAGS.get(int(k) if k.isdigit() else 0, k)
                     out[f"GPS {gname}"] = str(v)
@@ -306,6 +314,28 @@ def _parse_exif_ifd(data: bytes, out: dict):
                 pass
     except Exception:
         pass
+
+
+def _get_exif_mapped_value(tag_name: str, value: Any) -> str:
+    """Map raw EXIF numerical values to standard ExifTool descriptive strings."""
+    try:
+        val_int = int(value)
+    except (ValueError, TypeError):
+        return str(value)
+
+    MAPPINGS = {
+        "Orientation": {1: "Horizontal (normal)", 2: "Mirror horizontal", 3: "Rotate 180", 4: "Mirror vertical", 5: "Mirror horizontal and rotate 270 HW", 6: "Rotate 90 CW", 7: "Mirror horizontal and rotate 90 HW", 8: "Rotate 270 CW"},
+        "ResolutionUnit": {1: "None", 2: "inches", 3: "cm"},
+        "PhotometricInterpretation": {0: "WhiteIsZero", 1: "BlackIsZero", 2: "RGB", 3: "RGB Palette", 4: "Transparency Mask", 5: "CMYK", 6: "YCbCr", 8: "CIELab"},
+        "ColorSpace": {1: "sRGB", 2: "Adobe RGB", 65535: "Uncalibrated"},
+        "Compression": {1: "Uncompressed", 2: "CCITT 1D", 3: "T4/Group 3 Fax", 4: "T6/Group 4 Fax", 5: "LZW", 6: "JPEG (old-style)", 7: "JPEG", 8: "Adobe Deflate", 32773: "PackBits"},
+        "Flash": {0: "No Flash", 1: "Fired", 5: "Fired, Return not detected", 7: "Fired, Return detected", 8: "On, Did not fire", 9: "On, Fired", 13: "On, Return not detected", 15: "On, Return detected", 16: "Off, Did not fire", 20: "Off, Did not fire, Return not detected", 24: "Auto, Did not fire", 25: "Auto, Fired", 29: "Auto, Fired, Return not detected", 31: "Auto, Fired, Return detected", 32: "No flash function", 48: "Off, No flash function", 65: "Fired, Red-eye reduction", 69: "Fired, Red-eye reduction, Return not detected", 71: "Fired, Red-eye reduction, Return detected", 73: "On, Red-eye reduction", 77: "On, Red-eye reduction, Return not detected", 79: "On, Red-eye reduction, Return detected", 80: "Off, Red-eye reduction", 89: "Auto, Fired, Red-eye reduction", 93: "Auto, Fired, Red-eye reduction, Return not detected", 95: "Auto, Fired, Red-eye reduction, Return detected"},
+        "WhiteBalance": {0: "Auto", 1: "Manual"}
+    }
+    
+    if tag_name in MAPPINGS:
+        return MAPPINGS[tag_name].get(val_int, str(value))
+    return str(value)
 
 
 def _decode_exif_value(data: bytes, endian: str, type_id: int, count: int, value_raw: bytes):
@@ -356,30 +386,21 @@ def _parse_xmp_block(xmp_str: str, out: dict):
     for k, v in re.findall(r'<([\w\-]+:[\w\-]+)>([^<]*)</\1>', xmp_str):
         if v.strip():
             out[k] = v.strip()
-    # rdf:li lists (history, layernames, etc.)
-    for k in ("HistoryAction", "HistoryInstanceID", "HistoryWhen", "HistorySoftwareAgent", "HistoryChanged"):
-        items = re.findall(r'<rdf:li>([^<]*)</rdf:li>', xmp_str)
-        if items and k not in out:
-            pass  # Already captured by general pass above
-    # Specifically grab history from stEvt block
-    history_actions = re.findall(r'stEvt:action="([^"]+)"', xmp_str)
-    if history_actions:
-        out["HistoryAction"] = ",".join(history_actions)
-    history_when = re.findall(r'stEvt:when="([^"]+)"', xmp_str)
-    if history_when:
-        out["HistoryWhen"] = ",".join(history_when)
-    history_agents = re.findall(r'stEvt:softwareAgent="([^"]+)"', xmp_str)
-    if history_agents:
-        out["HistorySoftwareAgent"] = ",".join(history_agents)
-    history_iids = re.findall(r'stEvt:instanceID="([^"]+)"', xmp_str)
-    if history_iids:
-        out["HistoryInstanceID"] = ",".join(history_iids)
-    history_changed = re.findall(r'stEvt:changed="([^"]+)"', xmp_str)
-    if history_changed:
-        out["HistoryChanged"] = ",".join(history_changed)
+
+    # Specifically grab history elements from stEvt or other namespaces
+    for term in ("action", "instanceID", "when", "softwareAgent", "changed"):
+        # Match attributes: stEvt:term="..." or term="..."
+        matches = re.findall(r'(?:stEvt|xmpMM|xmp|pdf|dc):' + term + r'="([^"]+)"', xmp_str)
+        if not matches:
+            # Match element values: <stEvt:term>...</stEvt:term>
+            matches = re.findall(r'<(?:stEvt|xmpMM|xmp|pdf|dc):' + term + r'>([^<]+)</(?:stEvt|xmpMM|xmp|pdf|dc):' + term + r'>', xmp_str)
+        if matches:
+            key_name = f"History{term.capitalize() if term != 'instanceID' else 'InstanceID'}"
+            out[key_name] = ",".join(matches)
+
     # TextLayerName / TextLayerText
-    ln = re.findall(r'photoshop:LayerName="([^"]+)"', xmp_str)
-    lt = re.findall(r'photoshop:LayerText="([^"]+)"', xmp_str)
+    ln = re.findall(r'<photoshop:LayerName>([^<]+)</photoshop:LayerName>', xmp_str) or re.findall(r'photoshop:LayerName="([^"]+)"', xmp_str)
+    lt = re.findall(r'<photoshop:LayerText>([^<]+)</photoshop:LayerText>', xmp_str) or re.findall(r'photoshop:LayerText="([^"]+)"', xmp_str)
     if ln: out["TextLayerName"] = ",".join(ln)
     if lt: out["TextLayerText"] = ",".join(lt)
 
@@ -389,11 +410,15 @@ def _parse_photoshop_irb(seg_data: bytes, ps_out: dict, iptc_out: dict, embed_ou
     Parse Photoshop APP13 IRB (Image Resource Block) data.
     IRB format: '8BIM' + resource_id (2 bytes) + pascal_string_name + size (4 bytes) + data
     """
-    # Strip 'Photoshop 3.0\x00' header if present
-    header = b'Photoshop 3.0\x00'
     pos = 0
-    if seg_data[:len(header)] == header:
-        pos = len(header)
+    # Search dynamically for first IRB signature
+    bim_idx = seg_data.find(b'8BIM')
+    if bim_idx >= 0:
+        pos = bim_idx
+    else:
+        bam_idx = seg_data.find(b'8BAM')
+        if bam_idx >= 0:
+            pos = bam_idx
 
     while pos + 12 <= len(seg_data):
         sig = seg_data[pos:pos+4]
