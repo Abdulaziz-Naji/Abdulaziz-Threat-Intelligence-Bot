@@ -336,23 +336,22 @@ async def file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         metadata_summary = ""
         anomalies = []
         
-        if ftype in ("png", "jpg", "jpeg", "gif", "webp"):
-            exif = parse_image_exif(file_bytes)
-            if exif:
-                metadata_summary += f"<b>🖼 Extracted Metadata (Present Fields Only):</b>\n"
-                for key, val in exif.items():
-                    # Hide internal or giant structures unless relevant
-                    if key in ("GPSInfo", "MakerNote") and len(str(val)) > 80:
-                        val = "[Binary / Struct Data]"
-                    metadata_summary += f"  • <b>{key}:</b> <code>{val}</code>\n"
-                    
-                software = exif.get("Software", "")
-                if any(sw in software.lower() for sw in ("gimp", "photoshop", "exiftool", "paint.net", "canva")):
-                    anomalies.append(f"Image modified using software: <b>{software}</b>")
-                if "GPSInfo" in exif:
-                    anomalies.append("GPS location tags exposed in image metadata")
-            else:
-                metadata_summary += "<i>No EXIF/Metadata fields found in image.</i>\n"
+        if ftype in ("png", "jpg", "jpeg", "gif", "webp", "tiff", "bmp"):
+            import image_forensics as img_forensics
+            img_analysis = img_forensics.analyze_image_full(file_bytes, filename)
+            meta_pages = img_forensics.format_metadata_report(img_analysis)
+            try:
+                await thinking.delete()
+            except Exception:
+                pass
+            for pg in meta_pages:
+                if pg.strip():
+                    try:
+                        await message.reply_text(pg, parse_mode=ParseMode.HTML, disable_web_page_preview=True)
+                    except Exception:
+                        await message.reply_text(pg[:3900], parse_mode=ParseMode.HTML)
+            return
+
 
                 
         elif ftype == "pdf":
