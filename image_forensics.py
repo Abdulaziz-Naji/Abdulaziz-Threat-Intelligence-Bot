@@ -19,7 +19,6 @@ import re
 import math
 import struct
 import hashlib
-import subprocess
 from datetime import datetime
 from typing import Optional, Dict, List, Any
 
@@ -51,6 +50,7 @@ def analyze_image_full(data: bytes, filename: str) -> dict:
         "hidden_data": {},
         "forensic_assessment": {},
         "raw_text_layers": [],
+        "has_psd_thumbnail": False,
     }
 
     # 1. Run deeper binary extraction (XMP, Photoshop, IPTC)
@@ -383,6 +383,9 @@ def _extract_xmp_photoshop_layers(data: bytes, raw_str: str, res: dict):
         layers.append({"name": ln, "text": lt})
     res["raw_text_layers"] = layers
 
+    # Check if a Photoshop thumbnail structure is embedded in binary headers
+    res["has_psd_thumbnail"] = "photoshop:Thumbnail" in raw_str or (data.find(b'\xff\xd8', 2) != -1)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # FORENSIC HEURISTICS & VALIDATION MODULES
@@ -595,7 +598,6 @@ def _calculate_forensic_assessment(res: dict) -> dict:
 
     hd = res["hidden_data"]
     mv = res["metadata_validation"]
-    exif = res["exif_metadata"]
 
     # 1. High risk signals
     if hd.get("Hidden payload") != "Not Detected" or hd.get("Hidden ZIP") != "Not Detected" or hd.get("Hidden PDF") != "Not Detected":
@@ -631,71 +633,134 @@ def _calculate_forensic_assessment(res: dict) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# REPORT FORMATTER (STRICT DFIR FORMAT - NO FILLER, NO BUTTONS)
+# REPORT FORMATTER (REFINED FOR SOC/DFIR ANALYSTS)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def format_metadata_report(analysis: dict) -> list[str]:
     """
-    Formats the digital forensic report strictly according to specification.
-    Returns Telegram HTML formatted pages.
+    Formats the refined digital forensic report.
+    Hides empty, unknown, not detected or uninformative metadata fields.
+    Summarizes Photoshop details instead of raw dumps.
+    Omit sections entirely if empty.
     """
     import html as _h
     pages = []
     sep = "━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
-    fi = analysis.get("file_info", {})
-    ip = analysis.get("image_properties", {})
-    ex = analysis.get("exif_metadata", {})
-    gps = analysis.get("gps_analysis", {})
-    mv = analysis.get("metadata_validation", {})
-    ai = analysis.get("ai_detection", {})
-    ma = analysis.get("manipulation_analysis", {})
-    hd = analysis.get("hidden_data", {})
-    fa = analysis.get("forensic_assessment", {})
+    # Sentinel values that represent missing data
+    SENTINELS = {"Not Available", "None", "Unknown", "None Detected", "Not Detected", "N/A", "unknown", "none"}
+    
+    # Internal fields to hide completely
+    BLACKLIST = {
+        "exifbyteorder", "app14flags", "dctencodeversion", "colortransform",
+        "codedcharacterset", "filepermissions", "thumbnailoffset", "thumbnaillength",
+        "iptcdigest", "currentiptcdigest", "instanceid", "documentid",
+        "originaldocumentid", "historyinstanceid", "historysoftwareagent",
+        "historywhen", "historychanged", "historyaction", "slicesgroupname",
+        "numslices", "pixelaspectratio", "hasrealmergeddata", "writername",
+        "readername", "dctencodeversion"
+    }
 
-    def _fmt_section(title: str, emoji: str, data_dict: dict) -> str:
-        out = f"{emoji} <b>{title}</b>\n"
+    # 1. Clean and summarize Photoshop data if present
+    exif = dict(analysis.get("exif_metadata", {}))
+    raw_str = exif.get("Software", "").lower()
+    is_photoshop = "photoshop" in raw_str or any("photoshop" in str(v).lower() for v in exif.values())
+    
+    if is_photoshop:
+        # Construct summary properties
+        exif["Software"] = exif.get("Software", "Adobe Photoshop")
+        exif["Edited"] = "Yes"
+        text_layers = analysis.get("raw_text_layers", [])
+        if text_layers:
+            exif["Text Layers"] = f"{len(text_layers)} detected"
+        if analysis.get("has_psd_thumbnail"):
+            exif["Thumbnail Embedded"] = "Yes"
+        
+        # Clean out any Photoshop internal fields from EXIF representation
+        for k in list(exif.keys()):
+            if k.lower() in BLACKLIST or "adobe" in k.lower():
+                exif.pop(k, None)
+
+    def _clean_dict(data_dict: dict) -> dict:
+        cleaned = {}
         for k, v in data_dict.items():
-            val_str = str(v)
-            if v == "Not Available":
-                out += f"• <b>{k}:</b> <code>Not Available</code>\n"
-            elif k == "Google Maps link" and val_str != "Not Available":
-                out += f"• <b>{k}:</b> {val_str}\n"
+            k_low = k.lower().replace(" ", "").replace("_", "")
+            if k_low in BLACKLIST:
+                continue
+            val_str = str(v).strip()
+            if not val_str or any(s == val_str for s in SENTINELS):
+                continue
+            cleaned[k] = val_str
+        return cleaned
+
+    # Clean all input sections
+    fi_c = _clean_dict(analysis.get("file_info", {}))
+    ip_c = _clean_dict(analysis.get("image_properties", {}))
+    ex_c = _clean_dict(exif)
+    gps_c = _clean_dict(analysis.get("gps_analysis", {}))
+    mv_c = _clean_dict(analysis.get("metadata_validation", {}))
+    ai_c = _clean_dict(analysis.get("ai_detection", {}))
+    ma_c = _clean_dict(analysis.get("manipulation_analysis", {}))
+    hd_c = _clean_dict(analysis.get("hidden_data", {}))
+    fa_c = dict(analysis.get("forensic_assessment", {}))
+
+    def _fmt_section(title: str, emoji: str, cleaned_dict: dict) -> str:
+        if not cleaned_dict:
+            return ""
+        out = f"{emoji} <b>{title}</b>\n"
+        for k, v in cleaned_dict.items():
+            if k == "Google Maps link":
+                out += f"• <b>{k}:</b> {v}\n"
             else:
-                out += f"• <b>{k}:</b> <code>{_h.escape(val_str)}</code>\n"
+                out += f"• <b>{k}:</b> <code>{_h.escape(v)}</code>\n"
         out += "\n"
         return out
 
-    # Build report text
-    header = f"🔬 <b>DIGITAL FORENSIC IMAGE REPORT</b>\n<code>{sep}</code>\n\n"
-
-    sec_file = _fmt_section("File Information", "📁", fi)
-    sec_props = _fmt_section("Image Properties", "🖼", ip)
-    sec_exif = _fmt_section("EXIF Metadata", "📷", ex)
-    sec_gps = _fmt_section("GPS Analysis", "🌍", gps)
-    sec_val = _fmt_section("Metadata Validation", "🔎", mv)
-    sec_ai = _fmt_section("AI Image Detection", "🧠", ai)
-    sec_manip = _fmt_section("Image Manipulation Analysis", "🎨", ma)
-    sec_hidden = _fmt_section("Hidden Data", "🕵", hd)
+    # Build sections
+    sec_file = _fmt_section("File Information", "📁", fi_c)
+    sec_props = _fmt_section("Image Properties", "🖼", ip_c)
+    sec_exif = _fmt_section("EXIF Metadata", "📷", ex_c)
+    sec_gps = _fmt_section("GPS Analysis", "🌍", gps_c)
+    sec_val = _fmt_section("Metadata Validation", "🔎", mv_c)
+    sec_ai = _fmt_section("AI Image Detection", "🧠", ai_c)
+    sec_manip = _fmt_section("Image Manipulation Analysis", "🎨", ma_c)
+    sec_hidden = _fmt_section("Hidden Data", "🕵", hd_c)
 
     # Forensic Assessment section
-    sec_assess = "🔬 <b>Forensic Assessment</b>\n"
-    sec_assess += f"• <b>Overall Risk:</b> {fa.get('Overall Risk', 'CLEAN 🟢')}\n"
-    sec_assess += f"• <b>Confidence Score:</b> <code>{fa.get('Confidence Score', '95%')}</code>\n"
-    sec_assess += "• <b>Findings Summary:</b>\n"
-    for b in fa.get("Findings Summary", ["Clean file."]):
-        sec_assess += f"  - {_h.escape(b)}\n"
+    sec_assess = ""
+    if fa_c:
+        sec_assess = "🔬 <b>Forensic Assessment</b>\n"
+        sec_assess += f"• <b>Overall Risk:</b> {fa_c.get('Overall Risk', 'CLEAN 🟢')}\n"
+        sec_assess += f"• <b>Confidence Score:</b> <code>{fa_c.get('Confidence Score', '95%')}</code>\n"
+        
+        bullets = fa_c.get("Findings Summary", [])
+        if bullets:
+            sec_assess += "• <b>Findings Summary:</b>\n"
+            for b in bullets:
+                sec_assess += f"  - {_h.escape(b)}\n"
 
-    full_text_blocks = [
-        header + sec_file + sec_props,
-        sec_exif + sec_gps,
-        sec_val + sec_ai,
-        sec_manip + sec_hidden + sec_assess,
-    ]
+    # Compile the final report text
+    header = f"🔬 <b>DIGITAL FORENSIC IMAGE REPORT</b>\n<code>{sep}</code>\n\n"
 
-    # Combine into Telegram pages (max 3900 chars per page)
+    # Only add sections that contain fields
+    blocks = []
+    
+    first_block = header + sec_file + sec_props
+    if first_block.strip() != header.strip():
+        blocks.append(first_block)
+        
+    if sec_exif or sec_gps:
+        blocks.append(sec_exif + sec_gps)
+        
+    if sec_val or sec_ai:
+        blocks.append(sec_val + sec_ai)
+        
+    if sec_manip or sec_hidden or sec_assess:
+        blocks.append(sec_manip + sec_hidden + sec_assess)
+
+    # Paginate carefully for Telegram message constraints
     current_page = ""
-    for block in full_text_blocks:
+    for block in blocks:
         if len(current_page) + len(block) > 3800:
             pages.append(current_page.strip())
             current_page = ""
