@@ -510,6 +510,8 @@ def build_ti_report(
     comments: list = None,
     from_cache: bool = False,
     passive_dns: dict = None,
+    related_urls: dict = None,
+    related_hashes: dict = None,
 ) -> tuple[str, dict]:
     """
     Build a professional, evidence-only Threat Intelligence report.
@@ -535,6 +537,8 @@ def build_ti_report(
     case_correlations = case_correlations or []
     comments         = comments         or []
     passive_dns      = passive_dns      or {}
+    related_urls     = related_urls     or {}
+    related_hashes   = related_hashes   or {}
 
     # ── Feed Subsets ──────────────────────────────────────────────────────
     tf_entries  = [f for f in feeds if f.get("source", "").lower() == "threatfox"]
@@ -876,6 +880,92 @@ def build_ti_report(
                 
             pdns_lines.append("</pre>")
             parts.append("\n".join(pdns_lines) + "\n")
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # FIRST SEEN / LAST SEEN
+    # ═══════════════════════════════════════════════════════════════════════
+    first_seen = ""
+    last_seen = ""
+    if greynoise and greynoise.get("last_seen"):
+        last_seen = str(greynoise.get("last_seen"))[:10]
+    if otx and otx.get("pulses"):
+        created_dates = [p.get("created")[:10] for p in otx.get("pulses") if p.get("created")]
+        if created_dates:
+            created_dates.sort()
+            if not first_seen:
+                first_seen = created_dates[0]
+            if not last_seen or created_dates[-1] > last_seen:
+                last_seen = created_dates[-1]
+                
+    if first_seen or last_seen:
+        seen_lines = [
+            f"<code>{_SEP}</code>",
+            f"🕒 <b>FIRST SEEN / LAST SEEN</b>",
+            f"<code>{_SEP}</code>",
+        ]
+        if first_seen:
+            seen_lines.append(f"<b>First Seen</b>    <code>{first_seen}</code>")
+        if last_seen:
+            seen_lines.append(f"<b>Last Seen</b>     <code>{last_seen}</code>")
+        seen_lines.append("\n")
+        parts.append("\n".join(seen_lines))
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # THREAT TAGS
+    # ═══════════════════════════════════════════════════════════════════════
+    tag_set = set()
+    for t in vt.get("tags", []):
+        tag_set.add(str(t).lower().strip())
+    if greynoise:
+        if greynoise.get("noise"): tag_set.add("scanner")
+        if greynoise.get("riot"): tag_set.add("hosting")
+        cls = str(greynoise.get("classification") or "").lower()
+        if cls in ("malicious", "benign"):
+            tag_set.add(cls)
+    for p in otx.get("pulses", []):
+        for t in p.get("tags", []):
+            tag_set.add(str(t).lower().strip())
+            
+    tags_whitelist = {"scanner", "vpn", "tor", "malware", "botnet", "c2", "crawler", "proxy", "hosting", "phishing"}
+    display_tags = sorted(list({t for t in tag_set if t in tags_whitelist}))
+    if display_tags:
+        tags_lines = [
+            f"<code>{_SEP}</code>",
+            f"🏷 <b>THREAT TAGS</b>",
+            f"<code>{_SEP}</code>",
+            f"<code>{', '.join(display_tags)}</code>\n"
+        ]
+        parts.append("\n".join(tags_lines))
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # RELATED IOCS
+    # ═══════════════════════════════════════════════════════════════════════
+    related_domains_list = [r.get("domain") for r in (passive_dns.get("records") or []) if r.get("domain")][:5]
+    related_urls_list = (related_urls.get("urls") or [])[:5]
+    related_hashes_list = (related_hashes.get("hashes") or [])[:5]
+    
+    if related_domains_list or related_urls_list or related_hashes_list:
+        rel_lines = [
+            f"<code>{_SEP}</code>",
+            f"🔗 <b>RELATED IOCS</b>",
+            f"<code>{_SEP}</code>",
+        ]
+        if related_domains_list:
+            rel_lines.append("<b>Domains:</b>")
+            for dom in related_domains_list:
+                rel_lines.append(f"  • <code>{_e(dom)}</code>")
+        if related_urls_list:
+            rel_lines.append("<b>URLs:</b>")
+            for u in related_urls_list:
+                u_disp = u if len(u) <= 45 else u[:42] + "..."
+                rel_lines.append(f"  • <code>{_e(u_disp)}</code>")
+        if related_hashes_list:
+            rel_lines.append("<b>Hashes:</b>")
+            for h in related_hashes_list:
+                h_disp = h if len(h) <= 45 else h[:42] + "..."
+                rel_lines.append(f"  • <code>{_e(h_disp)}</code>")
+        rel_lines.append("\n")
+        parts.append("\n".join(rel_lines))
 
     # ═══════════════════════════════════════════════════════════════════════
     # DNS (compact)
