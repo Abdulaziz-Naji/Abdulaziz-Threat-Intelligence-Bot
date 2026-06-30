@@ -100,13 +100,29 @@ logger = logging.getLogger(__name__)
 
 
 from http.server import BaseHTTPRequestHandler
+import json
+import datetime
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
-        self.end_headers()
-        self.wfile.write(b"OK")
+        if self.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            now_utc = datetime.datetime.now(datetime.timezone.utc).isoformat()
+            response = {
+                "status": "ok",
+                "service": "Threat Intelligence Bot",
+                "version": "1.0",
+                "timestamp": now_utc
+            }
+            self.wfile.write(json.dumps(response).encode("utf-8"))
+        else:
+            self.send_response(404)
+            self.send_header("Content-Type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"Not Found")
+            
     def log_message(self, format, *args):
         pass  # suppress log spam
 
@@ -118,6 +134,7 @@ def run_dummy_server():
         from http.server import HTTPServer
         server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
         logger.info(f"🟢 Health check server listening on port {port}")
+        logger.info("Health endpoint available:\nGET /health")
         server.serve_forever()
     except Exception as e:
         logger.error(f"🔴 Failed to start health check server: {e}")
