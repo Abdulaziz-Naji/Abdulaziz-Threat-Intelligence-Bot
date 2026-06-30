@@ -509,6 +509,7 @@ def build_ti_report(
     case_correlations: list = None,
     comments: list = None,
     from_cache: bool = False,
+    passive_dns: dict = None,
 ) -> tuple[str, dict]:
     """
     Build a professional, evidence-only Threat Intelligence report.
@@ -533,6 +534,7 @@ def build_ti_report(
     feeds            = feeds            or []
     case_correlations = case_correlations or []
     comments         = comments         or []
+    passive_dns      = passive_dns      or {}
 
     # ── Feed Subsets ──────────────────────────────────────────────────────
     tf_entries  = [f for f in feeds if f.get("source", "").lower() == "threatfox"]
@@ -841,6 +843,41 @@ def build_ti_report(
         parts.append("\n")
 
     # ═══════════════════════════════════════════════════════════════════════
+    # PASSIVE DNS
+    # ═══════════════════════════════════════════════════════════════════════
+    if passive_dns and isinstance(passive_dns, dict):
+        records = passive_dns.get("records") or []
+        if records:
+            total_count = len(records)
+            limit_records = records[:10]
+            
+            pdns_lines = [
+                f"<code>{_SEP}</code>",
+                f"🌐 <b>PASSIVE DNS</b>",
+                f"<code>{_SEP}</code>",
+                f"Found Domains: {total_count}\n",
+                f"<pre>Date         Domain",
+                f"────────────────────────────"
+            ]
+            
+            for r in limit_records:
+                date_val = r.get("date", "0000-00-00")
+                det = r.get("detection", "")
+                domain_val = r.get("domain", "")
+                if det:
+                    row = f"{date_val:<12} {det:<6} {domain_val}"
+                else:
+                    row = f"{date_val:<12} {domain_val}"
+                pdns_lines.append(row)
+                
+            remaining = total_count - 10
+            if remaining > 0:
+                pdns_lines.append(f"...and {remaining} more domains.")
+                
+            pdns_lines.append("</pre>")
+            parts.append("\n".join(pdns_lines) + "\n")
+
+    # ═══════════════════════════════════════════════════════════════════════
     # DNS (compact)
     # ═══════════════════════════════════════════════════════════════════════
     if dns_records and ioc_type in ("domain", "url"):
@@ -978,6 +1015,7 @@ def build_ti_report(
         "soc_action":         "MONITOR",      # kept for DB schema compatibility only
         "soc_sources_active": list(components.keys()),
         "classifications":    classifications,
+        "passive_dns_count":  len(passive_dns.get("records") or []) if passive_dns else 0,
     }
 
     return "".join(parts), result
