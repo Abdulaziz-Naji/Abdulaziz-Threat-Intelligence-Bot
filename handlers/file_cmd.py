@@ -339,7 +339,7 @@ async def file_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if ftype in ("png", "jpg", "jpeg", "gif", "webp", "tiff", "bmp"):
             import image_forensics as img_forensics
             img_analysis = img_forensics.analyze_image_full(file_bytes, filename)
-            meta_pages = img_forensics.format_metadata_report(img_analysis)
+            meta_pages = img_forensics.format_metadata_report(img_analysis, is_photo=bool(photo))
             try:
                 await thinking.delete()
             except Exception:
