@@ -201,14 +201,20 @@ async def _run_analysis(ioc: str, ioc_type: str) -> tuple[str, dict]:
             api.greynoise_check_ip(ioc),
             api.rdap_ip(ioc),
             api.vt_comments_ip(ioc),
+            api.vt_get_passive_dns(ioc),
+            api.vt_get_related_urls(ioc),
+            api.vt_get_related_hashes(ioc),
             return_exceptions=True,
         )
-        vt_d, abuse_d, otx_d, geo_d, shodan_d, gn_d, rdap_d, comments_raw = results
+        vt_d, abuse_d, otx_d, geo_d, shodan_d, gn_d, rdap_d, comments_raw, passive_dns_d, rel_urls_d, rel_hashes_d = results
         return ti_rb.build_ti_report(
             ioc=ioc, ioc_type=ioc_type,
             vt=_safe(vt_d), abuse=_safe(abuse_d), otx=_safe(otx_d),
             geo=_safe(geo_d), shodan=_safe(shodan_d), greynoise=_safe(gn_d),
             rdap=_safe(rdap_d),
+            passive_dns=_safe(passive_dns_d),
+            related_urls=_safe(rel_urls_d),
+            related_hashes=_safe(rel_hashes_d),
             feeds=feeds_from_db, in_watchlist=in_watchlist,
             case_correlations=case_corr, comments=_safe_list(comments_raw),
         )
