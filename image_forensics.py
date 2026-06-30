@@ -609,9 +609,20 @@ def format_metadata_report(analysis: dict, is_photo: bool = False) -> list[str]:
         s = re.sub(r'\b([A-Z])\s+([A-Z])\b', r'\1\2', s) # Run twice to handle multiple adjacent single letters (e.g. I I D)
         return s.strip()
 
-    # Define the target categories
+    # Pre-process & Collect statistics for Embedded Resources & Findings
+    num_ps_resources = 0
+    has_thumbnail = False
+    has_text_layers = False
+    text_layers_val = ""
+    doc_id = ""
+    orig_doc_id = ""
+    has_history = False
+    has_gps = False
+    software_val = ""
+
+    # Define target category lists
     categories = {
-        "📁 File": [],
+        "📁 File Information": [],
         "🖼 Image": [],
         "📷 EXIF": [],
         "🎨 Photoshop": [],
@@ -631,27 +642,88 @@ def format_metadata_report(analysis: dict, is_photo: bool = False) -> list[str]:
         else:
             group, tag = "System", key
 
+        # ── Collect findings & statistics ──────────────────────────────────────
+        if "Resource0x" in tag:
+            num_ps_resources += 1
+            continue  # Skip raw Photoshop resources
+        if "Binary data" in value:
+            if "Thumbnail" in tag or "Image" in tag:
+                has_thumbnail = True
+            continue  # Skip raw binary data fields
+
+        if tag in ("TextLayerName", "TextLayerText"):
+            has_text_layers = True
+            if tag == "TextLayerText":
+                text_layers_val = value
+        if tag == "DocumentID":
+            doc_id = value
+        if tag == "OriginalDocumentID":
+            orig_doc_id = value
+        if "History" in tag:
+            has_history = True
+        if "GPS" in tag or "GPS" in group:
+            has_gps = True
+        if tag == "Software":
+            software_val = value
+
+        # Tag beauty conversion
         tag_display = beautify_tag(tag)
-        line = f"• <b>{tag_display}</b>: <code>{value}</code>"
 
-        # Determine correct category
+        # Dynamic dots alignment helper
+        lead_len = 22 - len(tag_display)
+        dots = "." * max(1, lead_len)
+        line_item = f"{tag_display} {dots} {value}"
+
+        # Category Routing
         if group in ("System", "File") and tag not in ("ImageWidth", "ImageHeight", "ImageSize", "Megapixels", "BitsPerSample", "ColorComponents", "PhotometricInterpretation", "SamplesPerPixel"):
-            categories["📁 File"].append(line)
+            categories["📁 File Information"].append(line_item)
         elif tag in ("ImageWidth", "ImageHeight", "ImageSize", "Resolution", "ColorSpace", "Compression", "Megapixels", "XResolution", "YResolution", "ResolutionUnit", "BitsPerSample", "ColorComponents", "PhotometricInterpretation", "SamplesPerPixel", "EncodingProcess", "ProgressiveScans"):
-            categories["🖼 Image"].append(line)
+            categories["🖼 Image"].append(line_item)
         elif group.startswith("ICC") or group == "ICC_Profile":
-            categories["📦 ICC Profile"].append(line)
+            categories["📦 ICC Profile"].append(line_item)
         elif group == "Photoshop" or tag in ("WriterName", "ReaderName", "LayerName", "LayerText", "TextLayerName", "TextLayerText", "PhotoshopQuality", "PhotoshopFormat", "HasRealMergedData", "NumSlices", "SlicesGroupName", "DisplayedUnitsX", "DisplayedUnitsY", "GlobalAngle", "GlobalAltitude", "URL_List", "PixelAspectRatio", "PrintStyle", "PrintPosition", "PrintScale", "DCTEncodeVersion"):
-            categories["🎨 Photoshop"].append(line)
+            categories["🎨 Photoshop"].append(line_item)
         elif group.startswith("XMP") or tag in ("CreateDate", "ModifyDate", "MetadataDate", "HistoryAction", "HistoryInstanceID", "HistoryWhen", "HistorySoftwareAgent", "HistoryChanged", "XMPToolkit", "DocumentID", "InstanceID", "OriginalDocumentID"):
-            categories["📝 XMP"].append(line)
-        elif tag in ("ThumbnailOffset", "ThumbnailLength", "PhotoshopThumbnail", "ThumbnailImage", "Embedded Thumbnail", "Slice Information") or "Resource0x" in tag:
-            categories["🖼 Embedded Resources"].append(line)
+            categories["📝 XMP"].append(line_item)
+        elif tag in ("ThumbnailOffset", "ThumbnailLength", "PhotoshopThumbnail", "ThumbnailImage", "Embedded Thumbnail", "Slice Information"):
+            categories["🖼 Embedded Resources"].append(line_item)
         else:
-            # Fallback EXIF for standard tags
-            categories["📷 EXIF"].append(line)
+            categories["📷 EXIF"].append(line_item)
 
-    # Build the final text blocks
+    # ── Populate 🖼 Embedded Resources Summary statistics ────────────────────────
+    if num_ps_resources > 0:
+        lead_len = 22 - len("Photoshop Resources")
+        dots = "." * max(1, lead_len)
+        categories["🖼 Embedded Resources"].append(f"Photoshop Resources {dots} {num_ps_resources} embedded resources detected")
+    if has_thumbnail:
+        lead_len = 22 - len("Embedded Thumbnail")
+        dots = "." * max(1, lead_len)
+        categories["🖼 Embedded Resources"].append(f"Embedded Thumbnail {dots} Present")
+    if has_text_layers:
+        lead_len = 22 - len("Text Layers")
+        dots = "." * max(1, lead_len)
+        categories["🖼 Embedded Resources"].append(f"Text Layers {dots} Present")
+
+    # ── Build 📌 Interesting Findings ⭐ Section ─────────────────────────────
+    findings = []
+    if software_val:
+        findings.append(f"• Software: <b>{software_val}</b>")
+    if has_thumbnail:
+        findings.append("• Embedded Thumbnail Found")
+    if has_text_layers:
+        findings.append("• Text Layer Detected")
+    if text_layers_val:
+        findings.append(f"• Hidden Text: <code>{text_layers_val}</code>")
+    if doc_id:
+        findings.append(f"• Document ID: <code>{doc_id}</code>")
+    if orig_doc_id:
+        findings.append(f"• Original Document ID: <code>{orig_doc_id}</code>")
+    if has_history:
+        findings.append("• XMP History Present")
+    if has_gps:
+        findings.append("• GPS Metadata Found")
+
+    # ── Compile the report pages ──────────────────────────────────────────────
     report_lines = []
 
     # Prepend warning for compressed photos
@@ -664,12 +736,20 @@ def format_metadata_report(analysis: dict, is_photo: bool = False) -> list[str]:
         )
         report_lines.append(warning)
 
+    # Add Interesting Findings first
+    if findings:
+        report_lines.append("<b>📌 Interesting Findings ⭐</b>")
+        report_lines.extend(findings)
+        report_lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
     for cat_title, cat_lines in categories.items():
         if cat_lines:
             report_lines.append(f"\n<b>{cat_title}</b>")
+            report_lines.append("<pre>")
             report_lines.extend(cat_lines)
+            report_lines.append("</pre>")
 
-    # Paginate blocks to fit within Telegram limits (HTML mode allows formatting)
+    # Paginate blocks to fit within Telegram limits
     pages = []
     current_page = []
     current_len = 0
