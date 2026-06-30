@@ -49,6 +49,7 @@ async def vt_check_ip(ip: str) -> dict:
         "asn":                    data.get("asn", ""),
         "as_owner":               data.get("as_owner", ""),
         "network":                data.get("network", ""),
+        "tags":                   data.get("tags", []),
         "last_analysis_results": data.get("last_analysis_results", {}),
     }
 
@@ -92,6 +93,42 @@ async def vt_get_passive_dns(ip: str) -> dict:
         
         records.sort(key=lambda x: x["epoch"], reverse=True)
         return {"records": records}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def vt_get_related_urls(ip: str) -> dict:
+    if not config.HAS_VT:
+        return {"error": "VirusTotal API key not configured"}
+    try:
+        async with _client() as c:
+            r = await c.get(
+                f"{_VT_BASE}/ip_addresses/{ip}/urls?limit=10",
+                headers={"x-apikey": config.VT_API_KEY},
+            )
+        if r.status_code != 200:
+            return {"error": f"VT HTTP {r.status_code}"}
+        res_data = r.json().get("data", [])
+        urls = [item.get("attributes", {}).get("url", "") for item in res_data if item.get("attributes", {}).get("url")]
+        return {"urls": urls}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+async def vt_get_related_hashes(ip: str) -> dict:
+    if not config.HAS_VT:
+        return {"error": "VirusTotal API key not configured"}
+    try:
+        async with _client() as c:
+            r = await c.get(
+                f"{_VT_BASE}/ip_addresses/{ip}/communicating_files?limit=10",
+                headers={"x-apikey": config.VT_API_KEY},
+            )
+        if r.status_code != 200:
+            return {"error": f"VT HTTP {r.status_code}"}
+        res_data = r.json().get("data", [])
+        hashes = [item.get("attributes", {}).get("sha256", "") for item in res_data if item.get("attributes", {}).get("sha256")]
+        return {"hashes": hashes}
     except Exception as e:
         return {"error": str(e)}
 
