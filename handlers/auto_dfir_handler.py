@@ -240,7 +240,7 @@ async def auto_dfir_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
                 try:
                     img_analysis = img_forensics.analyze_image_full(raw_data, filename)
-                    meta_pages   = img_forensics.format_metadata_report(img_analysis)
+                    meta_pages   = img_forensics.format_metadata_report(img_analysis, is_photo=bool(photos))
                     try:
                         await status_msg.delete()
                     except Exception:
