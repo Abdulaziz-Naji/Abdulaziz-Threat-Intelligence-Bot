@@ -53,6 +53,49 @@ async def vt_check_ip(ip: str) -> dict:
     }
 
 
+async def vt_get_passive_dns(ip: str) -> dict:
+    if not config.HAS_VT:
+        return {"error": "VirusTotal API key not configured"}
+    try:
+        async with _client() as c:
+            r = await c.get(
+                f"{_VT_BASE}/ip_addresses/{ip}/resolutions?limit=40",
+                headers={"x-apikey": config.VT_API_KEY},
+            )
+        if r.status_code != 200:
+            return {"error": f"VT HTTP {r.status_code}"}
+        
+        res_data = r.json().get("data", [])
+        records = []
+        import datetime
+        for item in res_data:
+            attrs = item.get("attributes", {})
+            date_epoch = attrs.get("date", 0)
+            try:
+                date_str = datetime.datetime.fromtimestamp(date_epoch, tz=datetime.timezone.utc).strftime("%Y-%m-%d")
+            except Exception:
+                date_str = "0000-00-00"
+            
+            domain = attrs.get("host_name", "")
+            stats = attrs.get("host_name_last_analysis_stats", {})
+            mal = stats.get("malicious", 0)
+            total = sum(stats.values()) if stats else 0
+            detection = f"{mal}/{total}" if total else ""
+            
+            if domain:
+                records.append({
+                    "date": date_str,
+                    "domain": domain,
+                    "detection": detection,
+                    "epoch": date_epoch
+                })
+        
+        records.sort(key=lambda x: x["epoch"], reverse=True)
+        return {"records": records}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 async def vt_check_domain(domain: str) -> dict:
     if not config.HAS_VT:
         return {"error": "VirusTotal API key not configured"}
