@@ -30,7 +30,14 @@ WELCOME_MSG = (
     "• Send a domain → <code>example.com</code>\n"
     "• Send a URL → <code>https://site.com</code>\n"
     "• Send a hash → <code>d41d8cd98f00b204e9800998ecf8427e</code>\n"
-    "• Send an email → <code>test@gmail.com</code>"
+    "• Send an email → <code>test@gmail.com</code>\n\n"
+    "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    "👨‍💻 <b>Developer</b>\n\n"
+    "🔗 <b>LinkedIn</b>\n"
+    "https://www.linkedin.com/in/abdulaziz-naji-93098a287\n\n"
+    "💻 <b>GitHub</b>\n"
+    "https://github.com/Abdulaziz-Naji\n\n"
+    "⭐ If you have suggestions, feedback, or feature requests, feel free to connect or open an issue on GitHub."
 )
 
 
